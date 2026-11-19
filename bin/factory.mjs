@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, realpathSync } from 'node:fs';
 import { resolve, join, dirname, basename } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -203,7 +203,11 @@ export function makeWorktree(p, id) {
   must(!t.worktree, 'Task already has worktree');
   must(existsSync(join(p, '.git')) || git(p, ['rev-parse', '--is-inside-work-tree']) === 'true', 'Project must be a Git repository');
   const root = git(p, ['rev-parse', '--show-toplevel']);
-  must(resolve(root) === p, 'Use the repository root as project path');
+  const normReal = x => {
+    const r = typeof realpathSync.native === 'function' ? realpathSync.native(resolve(x)) : realpathSync(resolve(x));
+    return process.platform === 'win32' ? r.toLowerCase() : r;
+  };
+  must(normReal(root) === normReal(p), 'Use the repository root as project path');
   const branch = `factory/${id}`;
   const destination = join(store(p), 'worktrees', id);
   mkdirSync(dirname(destination), { recursive: true });
