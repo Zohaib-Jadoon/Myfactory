@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, realpathSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, realpathSync, copyFileSync } from 'node:fs';
 import { resolve, join, dirname, basename } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -111,6 +111,22 @@ export function detectChecks(p) {
   return inspectProjectStack(asPath(p)).required_checks;
 }
 
+function copyMissingTree(srcDir, destDir, created = []) {
+  if (!existsSync(srcDir)) return created;
+  mkdirSync(destDir, { recursive: true });
+  for (const entry of readdirSync(srcDir, { withFileTypes: true })) {
+    const srcPath = join(srcDir, entry.name);
+    const dstPath = join(destDir, entry.name);
+    if (entry.isDirectory()) {
+      copyMissingTree(srcPath, dstPath, created);
+    } else if (entry.isFile() && !existsSync(dstPath)) {
+      copyFileSync(srcPath, dstPath);
+      created.push(dstPath);
+    }
+  }
+  return created;
+}
+
 export function init(p, opts = {}) {
   p = asPath(p);
   must(existsSync(p), `Project path does not exist: ${p}`);
@@ -138,6 +154,12 @@ export function init(p, opts = {}) {
   const ig = join(store(p), '.gitignore');
   if (!existsSync(ig)) writeFileSync(ig, '*\n', 'utf8');
 
+  const scaffolded = [];
+  if (opts.full) {
+    copyMissingTree(join(ROOT, '.agent'), join(p, '.agent'), scaffolded);
+    copyMissingTree(join(ROOT, '.agents'), join(p, '.agents'), scaffolded);
+  }
+
   const config = readJson(conf);
   withDb(p, db => {
     const proj = syncProjectRecord(db, p);
@@ -148,7 +170,7 @@ export function init(p, opts = {}) {
     }
     db.log(proj.id, `Initialized project ${proj.name} (adapters: ${stack.adapters.join(', ') || 'generic'})`, { agentRole: 'director' });
   });
-  return { project: p, adapters: stack.adapters, runtimes: stack.runtimes, config };
+  return { project: p, adapters: stack.adapters, runtimes: stack.runtimes, config, scaffolded_count: scaffolded.length };
 }
 
 export function create(p, title, criteria = '', opts = {}) {
@@ -507,7 +529,7 @@ function help() {
 
 Usage:
   node bin/factory.mjs doctor [project]
-  node bin/factory.mjs init [project] [--name "Project"]
+  node bin/factory.mjs init [project] [--name "Project"] [--factory-only]
   node bin/factory.mjs plan [project] --goal "Requirements..." [--roles backend,frontend,database]
   node bin/factory.mjs create [project] --name "Task" --criteria "Outcome" [--role backend]
   node bin/factory.mjs run [project] [--pipeline ID] [--concurrency 3]
@@ -547,7 +569,7 @@ if (executed) {
       const p = args[0] && !args[0].startsWith('--') ? args[0] : process.cwd();
       let output;
       switch (command) {
-        case 'init': output = init(p, { name: arg(args, 'name') }); break;
+        case 'init': output = init(p, { name: arg(args, 'name'), full: !hasFlag(args, 'factory-only') }); break;
         case 'doctor': output = doctor(p); break;
         case 'plan': output = plan(p, arg(args, 'goal'), { roles: arg(args, 'roles') }); break;
         case 'create': output = create(p, arg(args, 'name'), arg(args, 'criteria'), { role: arg(args, 'role') || 'backend', stage: arg(args, 'stage') || 'implementation', priority: Number(arg(args, 'priority') || 50) }); break;

@@ -241,3 +241,18 @@ test('dashboard JSON API returns persisted SQLite state cleanly', async t => {
     server.close();
   }
 });
+
+test('full init scaffolds .agent, .agents, and .factory while preserving existing files', t => {
+  const dir = setupRepo(t, { withGit: false });
+  mkdirSync(join(dir, '.agent'), { recursive: true });
+  writeFileSync(join(dir, '.agent', 'README.md'), 'CUSTOM_EXISTING_README\n', 'utf8');
+
+  const res = init(dir, { full: true });
+  assert.ok(res.scaffolded_count > 10);
+  assert.equal(readFileSync(join(dir, '.agent', 'README.md'), 'utf8'), 'CUSTOM_EXISTING_README\n');
+  assert.ok(existsSync(join(dir, '.agent', 'SECURITY.md')));
+  assert.ok(existsSync(join(dir, '.agents', 'skills', 'factory-init', 'SKILL.md')));
+  assert.ok(existsSync(join(dir, '.agents', 'workflows', 'factory-build.md')));
+  assert.ok(existsSync(join(dir, '.agents', 'rules', 'factory-quality.md')));
+  assert.ok(existsSync(join(dir, '.factory', 'config.json')));
+});

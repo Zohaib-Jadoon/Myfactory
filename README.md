@@ -14,7 +14,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Tools\Myfactory\insta
 ```
 
 - Use `-Scope Global` (no `-ProjectPath`) to install globally for all projects on your PC (`~/.gemini/config/skills`, `~/.gemini/workflows`, `~/.gemini/config/rules`, `~/.gemini/GEMINI.md`, `~/.gemini/factory-home`, and `factory` CLI on `PATH`).
-- Use `-Scope Both -ProjectPath "C:\Projects\MyApp"` to also initialize `.agent/`, `.agents/`, and `.factory/` inside a specific repository while preserving existing files.
+- Once installed globally, running **`factory init .`** inside **any** project directory installs `.agent/`, `.agents/`, and `.factory/` (preserving any existing files), detects stack adapters, and registers the project in SQLite in one command. Pass `--factory-only` to create `.factory/` only without `.agent/` or `.agents/`.
 
 ### Reusable Antigravity Instruction
 
