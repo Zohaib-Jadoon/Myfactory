@@ -64,7 +64,9 @@ if ($Scope -in @('Global','Both')) {
     New-Item -ItemType Directory -Force -Path $factoryHome | Out-Null
     foreach ($dirName in @('bin','src','.agents','.agent')) {
         $srcDir = Join-Path $source $dirName
-        if (Test-Path $srcDir) { Copy-Item $srcDir (Join-Path $factoryHome $dirName) -Recurse -Force }
+        $dstDir = Join-Path $factoryHome $dirName
+        if (Test-Path $dstDir) { Remove-Item -LiteralPath $dstDir -Recurse -Force }
+        if (Test-Path $srcDir) { Copy-Tree $srcDir $dstDir $true }
     }
     Copy-Item (Join-Path $source 'package.json') (Join-Path $factoryHome 'package.json') -Force
     $localBin = Join-Path $HOME '.local\bin'
