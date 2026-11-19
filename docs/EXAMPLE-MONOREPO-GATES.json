@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "human_approval_required": true,
+  "automatic_deployment": false,
+  "required_checks": [
+    {"name":"web-lint", "cwd":"apps/web", "command":"npm", "args":["run","lint"]},
+    {"name":"web-typecheck", "cwd":"apps/web", "command":"npm", "args":["run","typecheck"]},
+    {"name":"web-test", "cwd":"apps/web", "command":"npm", "args":["run","test"]},
+    {"name":"web-build", "cwd":"apps/web", "command":"npm", "args":["run","build"]},
+    {"name":"api-lint", "cwd":"apps/api", "command":"npm", "args":["run","lint"]},
+    {"name":"api-test", "cwd":"apps/api", "command":"npm", "args":["run","test"]},
+    {"name":"api-build", "cwd":"apps/api", "command":"npm", "args":["run","build"]}
+  ]
+}

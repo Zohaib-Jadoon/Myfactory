@@ -1,0 +1,10 @@
+.factory/
+.fallow/
+node_modules/
+*.log
+*.db
+*.db-wal
+*.db-shm
+.env
+.env.*
+!.env.example

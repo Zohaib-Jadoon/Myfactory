@@ -1,0 +1,21 @@
+UNIVERSAL SOFTWARE FACTORY for Antigravity IDE — Windows 11
+==========================================================
+
+1. Extract the ZIP to C:\Tools\universal-software-factory
+   (Do not run installer from inside a ZIP preview.)
+2. Read README.md. Verify/install Git, Node.js 20+ and Antigravity IDE.
+3. Double-click INSTALL-ON-WINDOWS.cmd
+   Or use PowerShell: .\installer\Install-All.ps1
+4. Restart the Antigravity IDE agent conversation. In the agent
+   panel > Customizations > Skills, check factory-build, factory-plan,
+   poteto-mode, ponytail, factory-verify and factory-release.
+5. Open your app's own Git repo in Antigravity.
+6. Paste the content of docs\FIRST_ANTIGRAVITY_PROMPT.md in agent chat.
+7. Optional: use the local task tracker/dashboard from README.md.
+
+INSTALL DOES NOT AUTOMATICALLY START ANY AGENT, BUILD APKs, DEPLOY
+OR CONNECT TO GITHUB/VERCEL/RENDER. THIRD-PARTY SKILLS ARE FETCHED
+FROM PUBLIC SOURCE REPOSITORIES; INSPECT BEFORE USE.
+
+Status: version 0.1.0 local operational starter. NOT a certified
+99.99% production pipeline or autonomous multi-agent service.
