@@ -8,10 +8,14 @@ param(
     [switch]$InstallPonytail,
     [switch]$InstallExternalSkills,
     [switch]$SkipExternalSkills,
+    [switch]$Offline,
     [switch]$UpdateFactory
 )
 $ErrorActionPreference='Stop'
 $source=Split-Path -Parent $PSScriptRoot
+$UserRoot = if ($env:FACTORY_TEST_USERPROFILE) { $env:FACTORY_TEST_USERPROFILE } else { $HOME }
+$FactoryDataHome = if ($env:FACTORY_GLOBAL_HOME) { $env:FACTORY_GLOBAL_HOME } else { Join-Path $UserRoot '.gemini\factory' }
+if ($Offline) { $SkipExternalSkills = $true }
 $PstackRepo='https://github.com/backnotprop/pstack.git'
 $PonytailRepo='https://github.com/DietrichGebert/ponytail.git'
 if ($InstallExternalSkills) { $InstallPstack = $true; $InstallPonytail = $true }
@@ -21,12 +25,21 @@ if ($Scope -in @('Workspace','Both')) {
     $ProjectPath=(Resolve-Path -LiteralPath $ProjectPath).Path
 }
 
-function Copy-Tree([string]$from,[string]$dest,[bool]$overwrite=$false){
+function Copy-Tree([string]$from,[string]$dest,[bool]$overwrite=$false,[hashtable]$prevHashes=@{}){
     if (-not (Test-Path $from)) { return }
     Get-ChildItem -LiteralPath $from -File -Recurse | ForEach-Object {
         $rel = $_.FullName.Substring($from.Length).TrimStart([char]'\',[char]'/')
         $out = Join-Path $dest $rel
-        if ((Test-Path -LiteralPath $out) -and (-not $overwrite)) {
+        $shouldWrite = $true
+        if (Test-Path -LiteralPath $out) {
+            if (-not $overwrite) {
+                $shouldWrite = $false
+            } elseif ($prevHashes.Count -gt 0 -and $prevHashes.ContainsKey($rel)) {
+                $curHash = (Get-FileHash -LiteralPath $out -Algorithm SHA256).Hash.ToLowerInvariant()
+                if ($curHash -ne $prevHashes[$rel]) { $shouldWrite = $false }
+            }
+        }
+        if (-not $shouldWrite) {
             Write-Host "Preserved: $out"
         } else {
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $out) | Out-Null
@@ -80,21 +93,25 @@ $externalTargets=@()
 $agentTargets=@()
 
 if ($Scope -in @('Global','Both')) {
-    $gSkills=Join-Path $HOME '.gemini\config\skills'
-    $gRules=Join-Path $HOME '.gemini\config\rules'
-    $gWorkflows=@((Join-Path $HOME '.gemini\workflows'), (Join-Path $HOME '.agents\workflows'))
+    $gSkills=Join-Path $UserRoot '.gemini\config\skills'
+    $gRules=Join-Path $UserRoot '.gemini\config\rules'
+    $gAgents=Join-Path $UserRoot '.gemini\config\agents'
+    $gWorkflows=@((Join-Path $UserRoot '.gemini\workflows'), (Join-Path $UserRoot '.agents\workflows'))
     Copy-Tree (Join-Path $source '.agents\skills') $gSkills ([bool]$UpdateFactory)
     Copy-Tree (Join-Path $source '.agents\rules') $gRules ([bool]$UpdateFactory)
+    Copy-Tree (Join-Path $source '.agents\agents') $gAgents ([bool]$UpdateFactory)
     foreach ($wf in $gWorkflows) { Copy-Tree (Join-Path $source '.agents\workflows') $wf ([bool]$UpdateFactory) }
     $externalTargets += $gSkills
 
-    # Cursor global skills & rules (~/.cursor/skills and ~/.cursor/rules; never touch ~/.cursor/skills-cursor)
-    $cSkills=Join-Path $HOME '.cursor\skills'
-    $cRules=Join-Path $HOME '.cursor\rules'
+    # Cursor global skills, rules & subagents (~/.cursor/skills, ~/.cursor/rules, ~/.cursor/agents; never touch ~/.cursor/skills-cursor)
+    $cSkills=Join-Path $UserRoot '.cursor\skills'
+    $cRules=Join-Path $UserRoot '.cursor\rules'
+    $cAgents=Join-Path $UserRoot '.cursor\agents'
     Copy-Tree (Join-Path $source '.agents\skills') $cSkills ([bool]$UpdateFactory)
     Copy-Tree (Join-Path $source '.cursor\rules') $cRules ([bool]$UpdateFactory)
+    Copy-Tree (Join-Path $source '.cursor\agents') $cAgents ([bool]$UpdateFactory)
     $externalTargets += $cSkills
-    $agentTargets += (Join-Path $HOME '.cursor\agents')
+    $agentTargets += $cAgents
 
     $cursorModels = Join-Path $cRules 'pstack-models.mdc'
     if (-not (Test-Path $cursorModels)) {
@@ -103,7 +120,6 @@ if ($Scope -in @('Global','Both')) {
         Write-Host "Installed: $cursorModels"
     }
 
-    # Mirror existing local pstack and Ponytail skills from Antigravity global skills into Cursor ~/.cursor/skills if missing
     if (Test-Path $gSkills) {
         $mirrorList = @(
             'architect','arena','automate-me','benchmark-checklist','blast-radius','bro',
@@ -125,30 +141,39 @@ if ($Scope -in @('Global','Both')) {
         }
     }
 
-    $factoryHome = Join-Path $HOME '.gemini\factory-home'
+    $factoryHome = Join-Path $UserRoot '.gemini\factory-home'
+    if ((Test-Path $factoryHome) -and $UpdateFactory) {
+        $bakDir = Join-Path $FactoryDataHome ("backups\install-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+        New-Item -ItemType Directory -Force -Path $bakDir | Out-Null
+        foreach ($d in @('bin','src','package.json')) {
+            $p = Join-Path $factoryHome $d
+            if (Test-Path $p) { Copy-Item -LiteralPath $p -Destination $bakDir -Recurse -Force }
+        }
+        Write-Host "Backed up prior factory-home to: $bakDir"
+    }
     New-Item -ItemType Directory -Force -Path $factoryHome | Out-Null
-    foreach ($dirName in @('bin','src','.agents','.agent','.cursor')) {
+    foreach ($dirName in @('bin','src','.agents','.agent','.cursor','installer')) {
         $srcDir = Join-Path $source $dirName
         $dstDir = Join-Path $factoryHome $dirName
         if (Test-Path $dstDir) { Remove-Item -LiteralPath $dstDir -Recurse -Force }
         if (Test-Path $srcDir) { Copy-Tree $srcDir $dstDir $true }
     }
     Copy-Item (Join-Path $source 'package.json') (Join-Path $factoryHome 'package.json') -Force
-    $localBin = Join-Path $HOME '.local\bin'
+
+    New-Item -ItemType Directory -Force -Path (Join-Path $FactoryDataHome 'memory') | Out-Null
+
+    $localBin = Join-Path $UserRoot '.local\bin'
     New-Item -ItemType Directory -Force -Path $localBin | Out-Null
     [IO.File]::WriteAllText((Join-Path $localBin 'factory.cmd'), "@echo off`r`nnode `"%USERPROFILE%\.gemini\factory-home\bin\factory.mjs`" %*`r`n")
     [IO.File]::WriteAllText((Join-Path $localBin 'factory'), "#!/bin/sh`nexec node `"`$HOME/.gemini/factory-home/bin/factory.mjs`" `"`$@`"`n")
 
-    $geminiMd = Join-Path $HOME '.gemini\GEMINI.md'
-    $skillRootPosix = ($gSkills -replace '\\','/')
+    $geminiMd = Join-Path $UserRoot '.gemini\GEMINI.md'
     $marker = '## Universal AI Software Factory (Auto-Active Across All Projects)'
     $block = @"
 $marker
-- **Automatic Engineering Stack**: For every coding, debugging, refactoring, or architecture task in any project on this machine, automatically follow:
-  1. **pstack (`/poteto-mode`)**: ``$skillRootPosix/poteto-mode/SKILL.md`` — understand flow and data shape first, separate concurrent state (Git worktrees), fix root causes, verify against real artifacts.
-  2. **Ponytail (`/ponytail full`)**: ``$skillRootPosix/ponytail/SKILL.md`` — YAGNI, reuse existing helpers, stdlib-first, minimal dependencies, smallest complete diff.
-- **Factory Workflows**: Use ``/factory-init``, ``/factory-plan``, ``/factory-build``, ``/factory-status``, ``/factory-test``, ``/factory-review``, ``/factory-fix``, ``/factory-release``, and ``/factory-resume``, backed by ``factory`` CLI.
-- **Release & Safety Integrity**: Never fabricate test passes, never close/restart Antigravity IDE, and never auto-push or deploy without explicit human approval.
+- **Automatic Engineering Stack**: Apply `poteto-mode` (`pstack`) and `ponytail` discipline scaled to task complexity (`FAST` lite vs `STANDARD`/`DEEP`/`RELEASE` full).
+- **Factory Workflows**: Use ``/factory-init``, ``/factory-plan``, ``/factory-build``, ``/factory-status``, ``/factory-test``, ``/factory-review``, ``/factory-fix``, ``/factory-release``, ``/factory-update``, ``/factory-learn``, ``/factory-skills``, ``/factory-deploy``, and ``/factory-resume``.
+- **Release & Safety Integrity**: Never fabricate test passes, never close/restart Antigravity or Cursor IDE, never store secrets/PII/biometrics in memory, and never auto-push or deploy without explicit human approval.
 "@
     if (-not (Test-Path $geminiMd)) {
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $geminiMd) | Out-Null
@@ -160,37 +185,47 @@ $marker
         }
     }
 
-    $pstackModels = Join-Path $HOME '.agents\pstack-models.md'
+    $pstackModels = Join-Path $UserRoot '.agents\pstack-models.md'
     if (-not (Test-Path $pstackModels)) {
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $pstackModels) | Out-Null
         [IO.File]::WriteAllText($pstackModels, "# pstack model configuration`n# defaults: 2`n# budget: large (xhigh)`nfeature, refactoring: inherit-parent`nbug-fix: inherit-parent`nperf-issue: inherit-parent`nhillclimb: inherit-parent`njudgment and prose: inherit-parent`nhardest tasks: inherit-parent`nreflect tooling: inherit-parent`nreflect judgment, divergent, synthesizer: inherit-parent`narena runners: inherit-parent`narena cross-judge pool: inherit-parent`nswarm workers: inherit-parent`narchitect runners: inherit-parent`ninterrogate reviewers: inherit-parent`n")
+    }
+
+    if (Get-Command node -ErrorAction SilentlyContinue) {
+        $fhUrl = 'file:///' + ($factoryHome -replace '\\','/')
+        $fdPath = ($FactoryDataHome -replace '\\','/')
+        & node -e "import { writeManagedManifest } from '$fhUrl/src/updater.mjs'; import { openFactoryDb } from '$fhUrl/src/db.mjs'; import { syncGlobalMemoryViews } from '$fhUrl/src/memory.mjs'; writeManagedManifest('$($factoryHome -replace '\\','/')'); const gdb = openFactoryDb('$fdPath/memory/global-memory.db'); syncGlobalMemoryViews('$fdPath', gdb); gdb.close();" | Out-Null
     }
     Write-Host "Installed global CLI runtime: $factoryHome and shim: $(Join-Path $localBin 'factory.cmd')"
 }
 
 if ($Scope -in @('Workspace','Both')) {
-    Copy-Tree (Join-Path $source '.agent') (Join-Path $ProjectPath '.agent') $false
-    Copy-Tree (Join-Path $source '.agents') (Join-Path $ProjectPath '.agents') ([bool]$UpdateFactory)
-    Copy-Tree (Join-Path $source '.cursor\rules') (Join-Path $ProjectPath '.cursor\rules') ([bool]$UpdateFactory)
-    Copy-Tree (Join-Path $source '.agents\skills') (Join-Path $ProjectPath '.cursor\skills') ([bool]$UpdateFactory)
+    if (Get-Command node -ErrorAction SilentlyContinue) {
+        $initArgs = @((Join-Path $source 'bin\factory.mjs'), 'init', $ProjectPath, '--skip-external')
+        if ($Offline) { $initArgs += '--offline' }
+        & node @initArgs | Out-Null
+        Write-Host "Initialized Myfactory v1.0 in $ProjectPath"
+    } else {
+        Copy-Tree (Join-Path $source '.agent') (Join-Path $ProjectPath '.agent') $false
+        Copy-Tree (Join-Path $source '.agents') (Join-Path $ProjectPath '.agents') ([bool]$UpdateFactory)
+        Copy-Tree (Join-Path $source '.cursor\rules') (Join-Path $ProjectPath '.cursor\rules') ([bool]$UpdateFactory)
+        Copy-Tree (Join-Path $source '.cursor\agents') (Join-Path $ProjectPath '.cursor\agents') ([bool]$UpdateFactory)
+        Copy-Tree (Join-Path $source '.agents\skills') (Join-Path $ProjectPath '.cursor\skills') ([bool]$UpdateFactory)
+    }
     $externalTargets += (Join-Path $ProjectPath '.agents\skills')
     $externalTargets += (Join-Path $ProjectPath '.cursor\skills')
-    if (Get-Command node -ErrorAction SilentlyContinue) {
-        & node (Join-Path $source 'bin\factory.mjs') init $ProjectPath --skip-external | Out-Null
-        Write-Host "Initialized .factory in $ProjectPath"
-    }
 }
 
 $missingPstack = @($externalTargets | Where-Object { -not (Test-Path (Join-Path $_ 'poteto-mode\SKILL.md')) })
 $missingPstackAgents = @($agentTargets | Where-Object { -not (Test-Path (Join-Path $_ 'poteto-agent.md')) })
 $missingPonytail = @($externalTargets | Where-Object { -not (Test-Path (Join-Path $_ 'ponytail\SKILL.md')) })
 
-if ($InstallPstack -or ((-not $SkipExternalSkills) -and (($missingPstack.Count -gt 0) -or ($missingPstackAgents.Count -gt 0)))) {
+if ((-not $SkipExternalSkills) -and ($InstallPstack -or ($missingPstack.Count -gt 0) -or ($missingPstackAgents.Count -gt 0))) {
     $targets = if ($InstallPstack) { $externalTargets } else { $missingPstack }
     $aTargets = if ($InstallPstack) { $agentTargets } else { $missingPstackAgents }
     Add-External $PstackRepo 'pstack' $targets $aTargets
 }
-if ($InstallPonytail -or ((-not $SkipExternalSkills) -and ($missingPonytail.Count -gt 0))) {
+if ((-not $SkipExternalSkills) -and ($InstallPonytail -or ($missingPonytail.Count -gt 0))) {
     $targets = if ($InstallPonytail) { $externalTargets } else { $missingPonytail }
     Add-External $PonytailRepo 'Ponytail' $targets
 }

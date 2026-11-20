@@ -1,7 +1,7 @@
 name: Factory Tests
 on:
   push:
-    branches: [main]
+    branches: [main, feat/*]
   pull_request:
 jobs:
   test:
@@ -18,4 +18,31 @@ jobs:
           node-version: '24'
       - run: npm test
       - run: npm run doctor
-
+      - name: Linux Installer & Offline Init Smoke Test
+        if: runner.os == 'Linux'
+        run: |
+          bash -n installer/install.sh
+          SANDBOX_HOME="$(mktemp -d)"
+          FACTORY_TEST_USERPROFILE="$SANDBOX_HOME" FACTORY_GLOBAL_HOME="$SANDBOX_HOME/.gemini/factory" bash installer/install.sh --scope global --offline
+          test -f "$SANDBOX_HOME/.gemini/factory-home/bin/factory.mjs"
+          test -f "$SANDBOX_HOME/.cursor/rules/factory-quality.mdc"
+          test -f "$SANDBOX_HOME/.cursor/agents/backend-architect.md"
+          rm -rf "$SANDBOX_HOME"
+      - name: Windows Installer Syntax & Offline Smoke Test
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $sandbox = Join-Path ([IO.Path]::GetTempPath()) ("ci-factory-" + [Guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory -Force -Path $sandbox | Out-Null
+          try {
+            $env:FACTORY_TEST_USERPROFILE = $sandbox
+            $env:FACTORY_GLOBAL_HOME = Join-Path $sandbox '.gemini\factory'
+            & .\installer\Setup.ps1 -Scope Global -Offline
+            if (-not (Test-Path (Join-Path $sandbox '.gemini\factory-home\bin\factory.mjs'))) { throw 'Missing factory-home binary' }
+            if (-not (Test-Path (Join-Path $sandbox '.cursor\rules\factory-quality.mdc'))) { throw 'Missing cursor rule' }
+            if (-not (Test-Path (Join-Path $sandbox '.cursor\agents\backend-architect.md'))) { throw 'Missing cursor subagent' }
+          } finally {
+            Remove-Item Env:FACTORY_TEST_USERPROFILE -ErrorAction SilentlyContinue
+            Remove-Item Env:FACTORY_GLOBAL_HOME -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
+          }

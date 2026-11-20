@@ -1,8 +1,9 @@
 import { createServer } from 'node:http';
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
 import { AGENT_ROLES, PIPELINE_STAGES, detectProviders } from './agents.mjs';
+import { AGENT_CATEGORIES, SPECIALIST_AGENTS } from './agent-registry.mjs';
 import { detectRuntimes } from './adapters.mjs';
+import { recommendSkills } from './skills-engine.mjs';
 
 function htmlEscape(x) {
   return String(x ?? '')
@@ -25,7 +26,7 @@ function badgeClass(status) {
   return 'neutral';
 }
 
-export function buildDashboardSnapshot({ db, activeProjectPath = null }) {
+export function buildDashboardSnapshot({ db, globalDb = null, activeProjectPath = null, version = '1.0.0' }) {
   const projects = db.listProjects();
   const activeProject = activeProjectPath
     ? (db.getProject(activeProjectPath) || projects[0] || null)
@@ -41,8 +42,31 @@ export function buildDashboardSnapshot({ db, activeProjectPath = null }) {
   const approvals = activeProject ? db.listApprovals(activeProject.id, 30) : db.listApprovals(null, 30);
   const agentRuns = activeProject ? db.listAgentRuns(activeProject.id, 40) : [];
 
+  const activeProfile = activeProject ? db.getProjectProfile(activeProject.id) : null;
+  const routingDecisions = activeProject ? db.listRoutingDecisions(activeProject.id, 30) : db.listRoutingDecisions(null, 30);
+  const skillRegistry = db.listSkillRecords();
+  const suggestedSkills = activeProject && existsSync(activeProject.path)
+    ? recommendSkills(activeProject.path, { offline: true }).recommended
+    : [];
+  const projectMemories = activeProject ? db.listMemories({ scope: 'project', projectId: activeProject.id, limit: 60 }) : [];
+  const globalMemories = globalDb ? globalDb.listMemories({ scope: 'global', limit: 80 }) : [];
+  const candidateMemories = [
+    ...projectMemories.filter(m => m.verification_status === 'candidate'),
+    ...globalMemories.filter(m => m.verification_status === 'candidate')
+  ];
+  const approvedPreferences = [
+    ...projectMemories.filter(m => (m.type === 'explicit_preference' || m.type === 'inferred_preference') && m.verification_status === 'approved'),
+    ...globalMemories.filter(m => (m.type === 'explicit_preference' || m.type === 'inferred_preference') && m.verification_status === 'approved')
+  ];
+  const updateHistory = globalDb ? globalDb.listUpdateHistory(20) : db.listUpdateHistory(20);
+  const contextMetrics = activeProject ? db.listContextMetrics(activeProject.id, 30) : db.listContextMetrics(null, 30);
+  const deploymentAdvice = activeProject ? db.listDeploymentAdvice(activeProject.id, 10) : db.listDeploymentAdvice(null, 10);
+  const improvementProposals = db.listImprovementProposals(null, 20);
+
   return {
     generated_at: new Date().toISOString(),
+    version,
+    schema_version: typeof db.schemaVersion === 'function' ? db.schemaVersion() : 2,
     db_path: db.path,
     health: {
       node: process.version,
@@ -52,6 +76,7 @@ export function buildDashboardSnapshot({ db, activeProjectPath = null }) {
     },
     projects,
     activeProject,
+    activeProfile,
     pipelines,
     tasks,
     logs,
@@ -60,7 +85,20 @@ export function buildDashboardSnapshot({ db, activeProjectPath = null }) {
     reviewFindings,
     releases,
     approvals,
-    agentRuns
+    agentRuns,
+    specialists: SPECIALIST_AGENTS.map(s => ({ id: s.id, name: s.name, category: s.category, legacyRole: s.legacyRole, readonly: s.readonly })),
+    specialistCategories: AGENT_CATEGORIES,
+    routingDecisions,
+    skillRegistry,
+    suggestedSkills,
+    projectMemories,
+    globalMemories,
+    candidateMemories,
+    approvedPreferences,
+    updateHistory,
+    contextMetrics,
+    deploymentAdvice,
+    improvementProposals
   };
 }
 
@@ -174,6 +212,60 @@ function renderDashboardHtml(snapshot, version) {
   const runtimeBadges = Object.entries(health.runtimes)
     .map(([k, v]) => `<span class="pill ${v ? 'ok' : 'neutral'}">${htmlEscape(k)}: ${v ? 'ok' : 'missing'}</span>`)
     .join(' ');
+
+  const routingRows = (snapshot.routingDecisions || []).slice(0, 12).map(r => `<tr>
+    <td><strong>${htmlEscape(r.primary_agent)}</strong><small>${htmlEscape((r.supporting_agents || []).join(', ') || 'solo')}</small></td>
+    <td><span class="pill neutral">${htmlEscape(r.complexity)}</span></td>
+    <td><code>${htmlEscape((r.selected_skills || []).join(', '))}</code></td>
+    <td>${htmlEscape(r.request_summary)}</td>
+  </tr>`).join('');
+
+  const skillRows = (snapshot.skillRegistry || []).map(s => `<tr>
+    <td><strong>${htmlEscape(s.name)}</strong><small>${htmlEscape(s.source)}</small></td>
+    <td><span class="pill ok">${htmlEscape(s.approval_status)}</span></td>
+    <td><code>${htmlEscape((s.sha256 || '—').slice(0, 12))}</code></td>
+    <td>${htmlEscape(s.security_summary || 'verified')}</td>
+  </tr>`).join('');
+
+  const suggestedBadges = (snapshot.suggestedSkills || []).map(s => `<span class="pill warn">${htmlEscape(s.name)} (${htmlEscape(s.source_type || 'catalog')})</span>`).join(' ');
+
+  const memRows = [...(snapshot.projectMemories || []), ...(snapshot.globalMemories || [])].slice(0, 15).map(m => `<tr>
+    <td><span class="pill ${badgeClass(m.verification_status)}">${htmlEscape(m.scope)}:${htmlEscape(m.verification_status)}</span><small>${htmlEscape(m.source_type)}</small></td>
+    <td><code>${htmlEscape(m.category)}</code></td>
+    <td>${htmlEscape(m.statement)}</td>
+  </tr>`).join('');
+
+  const candidateRows = (snapshot.candidateMemories || []).slice(0, 10).map(m => `<tr>
+    <td><code>${htmlEscape(m.id)}</code></td>
+    <td>${htmlEscape(m.category)}</td>
+    <td>${htmlEscape(m.statement)}</td>
+  </tr>`).join('');
+
+  const metricRows = (snapshot.contextMetrics || []).slice(0, 10).map(m => `<tr>
+    <td><span class="pill neutral">${htmlEscape(m.mode)}</span></td>
+    <td>${htmlEscape(m.estimated_context_bytes)} B / ${htmlEscape(m.baseline_context_bytes ?? '—')} B</td>
+    <td>${m.input_tokens != null ? `${htmlEscape(m.input_tokens)}/${htmlEscape(m.output_tokens)}` : 'unavailable'}</td>
+    <td>${htmlEscape(m.agent_invocations)}</td>
+  </tr>`).join('');
+
+  const updateRows = (snapshot.updateHistory || []).slice(0, 8).map(u => `<tr>
+    <td>${htmlEscape(u.action)}</td>
+    <td>${htmlEscape(u.from_version || '—')} -> ${htmlEscape(u.to_version || '—')}</td>
+    <td><span class="pill ${badgeClass(u.status === 'completed' ? 'completed' : 'blocked')}">${htmlEscape(u.status)}</span></td>
+    <td>${htmlEscape(fmtTime(u.created_at))}</td>
+  </tr>`).join('');
+
+  const deployRows = (snapshot.deploymentAdvice || []).slice(0, 5).map(d => `<tr>
+    <td><strong>${htmlEscape(d.recommended_platform)}</strong></td>
+    <td>${htmlEscape(d.profile_id || 'generic')}</td>
+    <td>${htmlEscape((d.options || []).map(o => o.platform).join(', '))}</td>
+    <td>${htmlEscape(fmtTime(d.created_at))}</td>
+  </tr>`).join('');
+
+  const proposalRows = (snapshot.improvementProposals || []).slice(0, 8).map(p => `<tr>
+    <td><strong>${htmlEscape(p.title)}</strong><small>${htmlEscape(p.hypothesis)}</small></td>
+    <td><span class="pill warn">${htmlEscape(p.status)}</span></td>
+  </tr>`).join('');
 
   return `<!doctype html>
 <html lang="en">
@@ -316,18 +408,62 @@ footer{margin-top:24px;color:#8296ab;font-size:12px}
       <div class="logs-box">${logRows || '<div class="log-line">No execution logs yet.</div>'}</div>
     </section>
     <section class="panel">
-      <h2>Project Configuration</h2>
+      <h2>Project Configuration &amp; Profile (${htmlEscape(snapshot.activeProfile?.profile_id || 'auto')})</h2>
       <pre>${htmlEscape(activeProject ? JSON.stringify(activeProject.config, null, 2) : '{}')}</pre>
     </section>
   </div>
 
-  <footer>Persisted in SQLite (${htmlEscape(snapshot.db_path)}). Read-only HTTP API: <code>/api/overview</code>, <code>/api/projects</code>, <code>/api/health</code>. Automatic deployment is disabled; approvals require clean verified HEAD.</footer>
+  <div class="grid">
+    <section class="panel">
+      <h2>Specialist Routing Decisions (${htmlEscape(String((snapshot.specialists || []).length))} Agents Available)</h2>
+      <table><thead><tr><th>Primary / Support</th><th>Mode</th><th>Skills</th><th>Request</th></tr></thead>
+      <tbody>${routingRows || '<tr><td colspan="4">No routing decisions recorded yet.</td></tr>'}</tbody></table>
+    </section>
+    <section class="panel">
+      <h2>Skills Registry &amp; Suggestions</h2>
+      <div class="pad">${suggestedBadges || '<span class="tag">Run factory skills recommend .</span>'}</div>
+      <table><thead><tr><th>Skill</th><th>Approval</th><th>SHA-256</th><th>Audit</th></tr></thead>
+      <tbody>${skillRows || '<tr><td colspan="4">No installed registry records yet.</td></tr>'}</tbody></table>
+    </section>
+  </div>
+
+  <div class="grid">
+    <section class="panel">
+      <h2>Project &amp; Global Memory</h2>
+      <table><thead><tr><th>Scope / Source</th><th>Category</th><th>Statement</th></tr></thead>
+      <tbody>${memRows || '<tr><td colspan="3">No memories persisted yet.</td></tr>'}</tbody></table>
+    </section>
+    <section class="panel">
+      <h2>Pending Candidate Lessons &amp; Improvement Proposals</h2>
+      <table><thead><tr><th>Candidate ID</th><th>Category</th><th>Statement</th></tr></thead>
+      <tbody>${candidateRows || '<tr><td colspan="3">No pending candidates awaiting approval.</td></tr>'}</tbody></table>
+      <table><thead><tr><th>Improvement Proposal</th><th>Status</th></tr></thead>
+      <tbody>${proposalRows || '<tr><td colspan="2">No improvement proposals generated yet.</td></tr>'}</tbody></table>
+    </section>
+  </div>
+
+  <div class="grid">
+    <section class="panel">
+      <h2>Context Budget &amp; Token Telemetry</h2>
+      <table><thead><tr><th>Mode</th><th>Context vs Baseline</th><th>Tokens</th><th>Agents</th></tr></thead>
+      <tbody>${metricRows || '<tr><td colspan="4">No context metrics recorded yet.</td></tr>'}</tbody></table>
+    </section>
+    <section class="panel">
+      <h2>Deployment Advisor &amp; Update History (Schema v${htmlEscape(String(snapshot.schema_version || 2))})</h2>
+      <table><thead><tr><th>Platform</th><th>Profile</th><th>Evaluated Options</th><th>Time</th></tr></thead>
+      <tbody>${deployRows || '<tr><td colspan="4">Run factory deploy advise . to evaluate hosting.</td></tr>'}</tbody></table>
+      <table><thead><tr><th>Action</th><th>Versions</th><th>Status</th><th>Time</th></tr></thead>
+      <tbody>${updateRows || '<tr><td colspan="4">No factory updates recorded yet.</td></tr>'}</tbody></table>
+    </section>
+  </div>
+
+  <footer>Persisted in SQLite (${htmlEscape(snapshot.db_path)}). Read-only HTTP APIs: <code>/api/overview</code>, <code>/api/projects</code>, <code>/api/health</code>, <code>/api/agents</code>, <code>/api/skills</code>, <code>/api/memory</code>, <code>/api/updates</code>, <code>/api/metrics</code>. Automatic deployment is disabled; approvals require clean verified HEAD.</footer>
 </main>
 </body>
 </html>`;
 }
 
-export function startDashboardServer({ dbPath = null, openDbFn = null, db = null, projectPath = null, port = 4177, version = '0.2.0' }) {
+export function startDashboardServer({ dbPath = null, globalDbPath = null, openDbFn = null, db = null, projectPath = null, port = 4177, version = '1.0.0' }) {
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error('Port must be 1–65535');
   }
@@ -345,13 +481,15 @@ export function startDashboardServer({ dbPath = null, openDbFn = null, db = null
     let snapshot;
     if (openDbFn && dbPath) {
       const reqDb = openDbFn(dbPath);
+      const reqGlobalDb = globalDbPath && existsSync(globalDbPath) ? openDbFn(globalDbPath) : null;
       try {
-        snapshot = buildDashboardSnapshot({ db: reqDb, activeProjectPath: targetProject });
+        snapshot = buildDashboardSnapshot({ db: reqDb, globalDb: reqGlobalDb, activeProjectPath: targetProject, version });
       } finally {
+        if (reqGlobalDb) reqGlobalDb.close();
         reqDb.close();
       }
     } else {
-      snapshot = buildDashboardSnapshot({ db, activeProjectPath: targetProject });
+      snapshot = buildDashboardSnapshot({ db, activeProjectPath: targetProject, version });
     }
 
     const commonHeaders = {
@@ -360,18 +498,19 @@ export function startDashboardServer({ dbPath = null, openDbFn = null, db = null
       'Connection': 'close'
     };
 
-    if (url.pathname === '/api/overview') {
+    const jsonReply = data => {
       res.writeHead(200, { ...commonHeaders, 'Content-Type': 'application/json; charset=utf-8' });
-      return res.end(JSON.stringify(snapshot, null, 2));
-    }
-    if (url.pathname === '/api/projects') {
-      res.writeHead(200, { ...commonHeaders, 'Content-Type': 'application/json; charset=utf-8' });
-      return res.end(JSON.stringify(snapshot.projects, null, 2));
-    }
-    if (url.pathname === '/api/health') {
-      res.writeHead(200, { ...commonHeaders, 'Content-Type': 'application/json; charset=utf-8' });
-      return res.end(JSON.stringify(snapshot.health, null, 2));
-    }
+      return res.end(JSON.stringify(data, null, 2));
+    };
+
+    if (url.pathname === '/api/overview') return jsonReply(snapshot);
+    if (url.pathname === '/api/projects') return jsonReply(snapshot.projects);
+    if (url.pathname === '/api/health') return jsonReply(snapshot.health);
+    if (url.pathname === '/api/agents') return jsonReply({ total: snapshot.specialists.length, categories: snapshot.specialistCategories, specialists: snapshot.specialists, routingDecisions: snapshot.routingDecisions });
+    if (url.pathname === '/api/skills') return jsonReply({ installed: snapshot.skillRegistry, suggested: snapshot.suggestedSkills });
+    if (url.pathname === '/api/memory') return jsonReply({ project: snapshot.projectMemories, global: snapshot.globalMemories, candidates: snapshot.candidateMemories, approvedPreferences: snapshot.approvedPreferences });
+    if (url.pathname === '/api/updates') return jsonReply({ version: snapshot.version, schema_version: snapshot.schema_version, updateHistory: snapshot.updateHistory });
+    if (url.pathname === '/api/metrics') return jsonReply({ contextMetrics: snapshot.contextMetrics, improvementProposals: snapshot.improvementProposals, deploymentAdvice: snapshot.deploymentAdvice });
     if (url.pathname !== '/') {
       res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8', 'Connection': 'close' });
       return res.end('Not found');

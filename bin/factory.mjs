@@ -5,10 +5,14 @@ import { resolve, join, dirname, basename } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { openFactoryDb, defaultDbPath, projectIdForPath } from '../src/db.mjs';
+import { openFactoryDb, defaultDbPath, defaultGlobalHome, defaultGlobalMemoryDbPath, projectIdForPath } from '../src/db.mjs';
+import { CURRENT_SCHEMA_VERSION } from '../src/migrations.mjs';
 import { inspectProjectStack, detectRuntimes } from '../src/adapters.mjs';
+import { PROJECT_PROFILES, detectProjectProfile, normalizeProfileId } from '../src/profiles.mjs';
 import { enforceSafetyPolicy, redactSecrets } from '../src/security.mjs';
 import { AGENT_ROLES, detectProviders, executeAgentTask } from '../src/agents.mjs';
+import { AGENT_CATEGORIES, SPECIALIST_AGENTS, validateAgentDefinitions } from '../src/agent-registry.mjs';
+import { selectSpecialists, explainSelection } from '../src/router.mjs';
 import { hashProjectConfig, runQualityGates } from '../src/gates.mjs';
 import {
   cancelTask,
@@ -16,10 +20,38 @@ import {
   integrateWorktree,
   prepareReleaseCandidate,
   resumeTasks,
-  runOrchestrator,
-  syncTaskFile
+  runOrchestrator
 } from '../src/orchestrator.mjs';
 import { startDashboardServer } from '../src/dashboard.mjs';
+import {
+  openGlobalMemoryDb,
+  learnFromProject,
+  recordMemory,
+  approveMemory,
+  rejectMemory,
+  disableMemory,
+  deleteMemory,
+  consolidateMemories,
+  retrieveRelevantMemories,
+  syncProjectMemoryViews,
+  syncGlobalMemoryViews,
+  exportMemories,
+  importMemories
+} from '../src/memory.mjs';
+import { proposeImprovements } from '../src/improvement.mjs';
+import { buildTaskContext, runContextBenchmark } from '../src/context-engine.mjs';
+import {
+  searchSkills,
+  recommendSkills,
+  inspectSkillSecurity,
+  installSkill,
+  listSkills,
+  checkSkills,
+  updateSkills,
+  removeSkill
+} from '../src/skills-engine.mjs';
+import { adviseDeployment, generateDeploymentPlan } from '../src/deployment-advisor.mjs';
+import { updateFactory, syncProject } from '../src/updater.mjs';
 
 export const VERSION = '1.0.0';
 export const PSTACK_REPO = 'https://github.com/backnotprop/pstack.git';
@@ -34,12 +66,23 @@ const putJson = (p, obj) => { mkdirSync(dirname(p), { recursive: true }); writeF
 const stamp = () => new Date().toISOString();
 const git = (p, args) => execFileSync('git', args, { cwd: p, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const slug = s => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 42) || 'task';
+const isTestEnv = () => process.execArgv.some(a => a.includes('test')) || Boolean(process.env.NODE_TEST_CONTEXT);
 
 function resolveDbPath(projectPath) {
   if (process.env.FACTORY_DB_PATH) return resolve(process.env.FACTORY_DB_PATH);
-  const runningInNodeTest = process.execArgv.some(a => a.includes('test')) || Boolean(process.env.NODE_TEST_CONTEXT);
-  if (runningInNodeTest && projectPath) return join(asPath(projectPath), '.factory', 'factory.db');
+  if (isTestEnv() && projectPath) return join(asPath(projectPath), '.factory', 'factory.db');
   return defaultDbPath();
+}
+
+function resolveGlobalHomeDir(projectPath = null) {
+  if (process.env.FACTORY_GLOBAL_HOME) return resolve(process.env.FACTORY_GLOBAL_HOME);
+  if (isTestEnv() && projectPath) return join(asPath(projectPath), '.factory', 'global-test');
+  return defaultGlobalHome();
+}
+
+function resolveGlobalMemoryDb(projectPath = null) {
+  if (process.env.FACTORY_GLOBAL_MEMORY_DB) return openFactoryDb(process.env.FACTORY_GLOBAL_MEMORY_DB);
+  return openGlobalMemoryDb(resolveGlobalHomeDir(projectPath));
 }
 
 function withDb(projectPath, fn) {
@@ -188,16 +231,97 @@ export function ensureExternalSkills({ skillTargets = [], agentTargets = [], ski
   return { skipped: false, installed, warnings };
 }
 
+function scaffoldWorkspaceFiles(srcRoot, p, profileId, adapters, scaffolded) {
+  // Top-level .agent docs (never copy master 60-file .agent/agents catalog into individual repos)
+  const srcAgentDir = join(srcRoot, '.agent');
+  if (existsSync(srcAgentDir)) {
+    mkdirSync(join(p, '.agent'), { recursive: true });
+    for (const entry of readdirSync(srcAgentDir, { withFileTypes: true })) {
+      if (entry.isFile()) {
+        const dst = join(p, '.agent', entry.name);
+        if (!existsSync(dst)) {
+          copyFileSync(join(srcAgentDir, entry.name), dst);
+          scaffolded.push(dst);
+        }
+      }
+    }
+  }
+
+  // Always copy workflows and generated Antigravity/Cursor subagent adapters
+  copyMissingTree(join(srcRoot, '.agents', 'workflows'), join(p, '.agents', 'workflows'), scaffolded);
+  copyMissingTree(join(srcRoot, '.agents', 'agents'), join(p, '.agents', 'agents'), scaffolded);
+  copyMissingTree(join(srcRoot, '.cursor', 'agents'), join(p, '.cursor', 'agents'), scaffolded);
+
+  // Core always-on rule + profile/stack conditional rules
+  const enabledRules = new Set(['factory-quality']);
+  if (['web', 'enterprise', 'iot'].includes(profileId)) enabledRules.add('frontend-standards');
+  if (adapters.some(a => ['postgres', 'prisma', 'sqlserver'].includes(a))) enabledRules.add('database-migrations');
+  if (profileId === 'ai' || adapters.includes('biometrics')) enabledRules.add('biometric-privacy');
+  if (profileId === 'legacy' || adapters.includes('iis_asp')) enabledRules.add('iis-windows-deploy');
+  if (profileId === 'game') enabledRules.add('game-engineering');
+
+  mkdirSync(join(p, '.agents', 'rules'), { recursive: true });
+  mkdirSync(join(p, '.cursor', 'rules'), { recursive: true });
+  for (const r of enabledRules) {
+    const agSrc = join(srcRoot, '.agents', 'rules', `${r}.md`);
+    const agDst = join(p, '.agents', 'rules', `${r}.md`);
+    if (existsSync(agSrc) && !existsSync(agDst)) { copyFileSync(agSrc, agDst); scaffolded.push(agDst); }
+    const curSrc = join(srcRoot, '.cursor', 'rules', `${r}.mdc`);
+    const curDst = join(p, '.cursor', 'rules', `${r}.mdc`);
+    if (existsSync(curSrc) && !existsSync(curDst)) { copyFileSync(curSrc, curDst); scaffolded.push(curDst); }
+  }
+
+  // Core factory-* skills + profile-matched eng-* skills only (avoid unrelated skill bloat)
+  const profileSkillSet = new Set(PROJECT_PROFILES[profileId]?.recommended_skills || []);
+  const srcSkillsDir = join(srcRoot, '.agents', 'skills');
+  if (existsSync(srcSkillsDir)) {
+    for (const sk of readdirSync(srcSkillsDir, { withFileTypes: true })) {
+      if (!sk.isDirectory()) continue;
+      if (!sk.name.startsWith('factory-') && !profileSkillSet.has(sk.name)) continue;
+      copyMissingTree(join(srcSkillsDir, sk.name), join(p, '.agents', 'skills', sk.name), scaffolded);
+      copyMissingTree(join(srcSkillsDir, sk.name), join(p, '.cursor', 'skills', sk.name), scaffolded);
+    }
+  }
+}
+
 export function init(p, opts = {}) {
   p = asPath(p);
   must(existsSync(p), `Project path does not exist: ${p}`);
   const conf = join(store(p), 'config.json');
   const stack = inspectProjectStack(p);
+  const requestedProfile = normalizeProfileId(opts.profile || 'auto');
+  const detected = detectProjectProfile(p, stack);
+  const profileId = requestedProfile === 'auto' ? detected.profileId : requestedProfile;
   const freshInit = !existsSync(conf);
+  const isLegacy = existsSync(join(p, 'package.json')) || existsSync(join(p, 'pyproject.toml')) ||
+    existsSync(join(p, 'web.config')) || existsSync(join(p, 'pubspec.yaml')) || existsSync(join(p, '.git'));
+
+  const recSkills = recommendSkills(p, { offline: opts.offline !== false });
+  const existingRules = [
+    ...(existsSync(join(p, '.agents', 'rules')) ? readdirSync(join(p, '.agents', 'rules')) : []),
+    ...(existsSync(join(p, '.cursor', 'rules')) ? readdirSync(join(p, '.cursor', 'rules')) : [])
+  ];
+
+  if (opts.dryRun) {
+    return {
+      dry_run: true,
+      project: p,
+      fresh_init: freshInit,
+      is_legacy: isLegacy,
+      profile: profileId,
+      adapters: stack.adapters,
+      required_checks: stack.required_checks,
+      existing_rules: existingRules,
+      recommended_skills: recSkills.recommended.map(r => r.name)
+    };
+  }
+
   if (freshInit) {
     putJson(conf, {
       schema: 2,
+      factory_version: VERSION,
       name: opts.name || basename(p),
+      profile: profileId,
       created_at: stamp(),
       adapters: stack.adapters,
       required_checks: stack.required_checks,
@@ -212,18 +336,17 @@ export function init(p, opts = {}) {
   }
   mkdirSync(join(store(p), 'tasks'), { recursive: true });
   mkdirSync(join(store(p), 'reports'), { recursive: true });
+  mkdirSync(join(store(p), 'memory'), { recursive: true });
   const ig = join(store(p), '.gitignore');
   if (!existsSync(ig)) writeFileSync(ig, '*\n', 'utf8');
 
   const scaffolded = [];
-  if (opts.full) {
-    copyMissingTree(join(ROOT, '.agent'), join(p, '.agent'), scaffolded);
-    copyMissingTree(join(ROOT, '.agents'), join(p, '.agents'), scaffolded);
-    copyMissingTree(join(ROOT, '.cursor', 'rules'), join(p, '.cursor', 'rules'), scaffolded);
-    copyMissingTree(join(ROOT, '.agents', 'skills'), join(p, '.cursor', 'skills'), scaffolded);
+  if (opts.full && !opts.factoryOnly) {
+    scaffoldWorkspaceFiles(ROOT, p, profileId, stack.adapters, scaffolded);
   }
 
   const config = readJson(conf);
+  let retrievedMemories = [];
   withDb(p, db => {
     const proj = syncProjectRecord(db, p);
     if (freshInit && readdirSync(join(store(p), 'tasks')).length === 0) {
@@ -231,9 +354,45 @@ export function init(p, opts = {}) {
     } else {
       syncTasksFromDisk(db, proj);
     }
-    db.log(proj.id, `Initialized project ${proj.name} (adapters: ${stack.adapters.join(', ') || 'generic'})`, { agentRole: 'director' });
+    db.setProjectProfile(proj.id, {
+      profileId,
+      detectedStack: stack.adapters,
+      overrideBy: requestedProfile === 'auto' ? null : 'init-flag'
+    });
+    const gDb = resolveGlobalMemoryDb(p);
+    try {
+      const memRes = retrieveRelevantMemories({
+        projectDb: db,
+        globalDb: gDb,
+        projectId: proj.id,
+        profileId,
+        stack: stack.adapters,
+        query: `${profileId} ${stack.adapters.join(' ')}`,
+        limit: 8
+      });
+      retrievedMemories = memRes.items;
+    } finally {
+      gDb.close();
+    }
+    syncProjectMemoryViews(p, db, proj.id);
+    db.log(proj.id, `Initialized project ${proj.name} (profile: ${profileId}, adapters: ${stack.adapters.join(', ') || 'generic'})`, { agentRole: 'director' });
   });
-  return { project: p, adapters: stack.adapters, runtimes: stack.runtimes, config, scaffolded_count: scaffolded.length };
+
+  if (opts.full && !opts.factoryOnly) {
+    syncProject({ projectPath: p, factoryRoot: ROOT, dryRun: false });
+  }
+
+  return {
+    project: p,
+    profile: profileId,
+    is_legacy: isLegacy,
+    adapters: stack.adapters,
+    runtimes: stack.runtimes,
+    config,
+    scaffolded_count: scaffolded.length,
+    retrieved_global_memories: retrievedMemories.filter(m => m.origin === 'global').map(m => ({ id: m.id, category: m.category, statement: m.statement, source_type: m.source_type })),
+    recommended_skills: recSkills.recommended.map(r => r.name)
+  };
 }
 
 export function create(p, title, criteria = '', opts = {}) {
@@ -347,6 +506,11 @@ export function verify(p, id) {
       writeTask(p, t);
       db.saveTask(proj.id, t);
       db.recordTaskEvent(proj.id, t.id, report.ok ? 'verified' : 'verification-failed', 'qa', `pass_rate=${report.metrics.gate_pass_rate}%`);
+      try {
+        learnFromProject({ projectPath: p, projectDb: db, globalDb: null, taskId: t.id });
+      } catch {
+        // Never allow learning hook errors to alter verification outcome.
+      }
     }
 
     db.log(proj.id, `Verification ${report.ok ? 'PASSED' : 'BLOCKED'} (${report.metrics.passed_gates}/${report.metrics.total_gates} gates)`, {
@@ -399,11 +563,14 @@ export function serve(p, port = 4177) {
   p = asPath(p);
   requireInit(p);
   const dbPath = resolveDbPath(p);
+  const gDbPath = process.env.FACTORY_GLOBAL_MEMORY_DB
+    ? resolve(process.env.FACTORY_GLOBAL_MEMORY_DB)
+    : join(resolveGlobalHomeDir(p), 'memory', 'global-memory.db');
   withDb(p, db => {
     const proj = syncProjectRecord(db, p);
     syncTasksFromDisk(db, proj);
   });
-  return startDashboardServer({ dbPath, openDbFn: openFactoryDb, projectPath: p, port, version: VERSION });
+  return startDashboardServer({ dbPath, globalDbPath: gDbPath, openDbFn: openFactoryDb, projectPath: p, port, version: VERSION });
 }
 
 export function doctor(p) {
@@ -413,9 +580,13 @@ export function doctor(p) {
   const globalWorkflows = join(home, '.gemini', 'workflows');
   const cursorSkillsDir = join(home, '.cursor', 'skills');
   const cursorRuleFile = join(home, '.cursor', 'rules', 'factory-quality.mdc');
+  const cursorAgentsDir = join(home, '.cursor', 'agents');
+  const antigravityAgentsDir = join(ROOT, '.agents', 'agents');
   const skills = existsSync(globalSkills) ? readdirSync(globalSkills).filter(d => existsSync(join(globalSkills, d, 'SKILL.md'))) : [];
   const cursorInstalled = existsSync(cursorSkillsDir) ? readdirSync(cursorSkillsDir).filter(d => existsSync(join(cursorSkillsDir, d, 'SKILL.md'))) : [];
   const workflows = existsSync(globalWorkflows) ? readdirSync(globalWorkflows).filter(f => f.endsWith('.md')) : [];
+  const cursorAgentsCount = existsSync(cursorAgentsDir) ? readdirSync(cursorAgentsDir).filter(f => f.endsWith('.md')).length : 0;
+  const antigravityAgentsCount = existsSync(antigravityAgentsDir) ? readdirSync(antigravityAgentsDir).length : 0;
   const expectedSkills = [
     'factory-init', 'factory-plan', 'factory-build', 'factory-status',
     'factory-test', 'factory-review', 'factory-fix', 'factory-release',
@@ -429,23 +600,59 @@ export function doctor(p) {
 
   const dbPath = resolveDbPath(p);
   let sqliteOk = false;
+  let schemaVersion = 0;
+  let registeredSkillsCount = 0;
   try {
     const db = openFactoryDb(dbPath);
-    sqliteOk = true;
-    db.close();
+    try {
+      sqliteOk = true;
+      schemaVersion = db.schemaVersion();
+      registeredSkillsCount = db.listSkillRecords().length;
+    } finally {
+      db.close();
+    }
   } catch {}
+
+  const globalHome = resolveGlobalHomeDir(p);
+  let globalMemoryOk = false;
+  let globalMemoryCount = 0;
+  let globalMemoryDbPath = null;
+  try {
+    const gDb = resolveGlobalMemoryDb(p);
+    try {
+      globalMemoryOk = true;
+      globalMemoryDbPath = gDb.path;
+      globalMemoryCount = gDb.listMemories({ scope: 'global', status: 'active', limit: 1000 }).length;
+    } finally {
+      gDb.close();
+    }
+  } catch {}
+
+  const agentVal = validateAgentDefinitions(ROOT);
 
   return {
     version: VERSION,
+    schema_version: schemaVersion,
+    expected_schema_version: CURRENT_SCHEMA_VERSION,
     node: process.version,
     sqlite_ok: sqliteOk,
     db_path: dbPath,
+    global_home: globalHome,
+    global_memory_db: globalMemoryDbPath,
+    global_memory_ok: globalMemoryOk,
+    global_memory_count: globalMemoryCount,
     git: gitVersion,
     project: p,
     initialized: existsSync(join(store(p), 'config.json')),
     adapters: existsSync(p) ? inspectProjectStack(p).adapters : [],
     runtimes: detectRuntimes(),
     providers: detectProviders(),
+    specialist_agent_count: SPECIALIST_AGENTS.length,
+    specialist_categories: AGENT_CATEGORIES,
+    agent_definitions_valid: agentVal.ok,
+    antigravity_agents_count: antigravityAgentsCount,
+    cursor_agents_count: cursorAgentsCount,
+    registered_skills_count: registeredSkillsCount,
     global_skill_path: globalSkills,
     global_workflow_path: globalWorkflows,
     installed_workflow_count: workflows.length,
@@ -598,25 +805,36 @@ function help() {
   return `Universal Software Factory v${VERSION}
 
 Usage:
-  node bin/factory.mjs doctor [project]
-  node bin/factory.mjs init [project] [--name "Project"] [--factory-only] [--skip-external]
-  node bin/factory.mjs plan [project] --goal "Requirements..." [--roles backend,frontend,database]
-  node bin/factory.mjs create [project] --name "Task" --criteria "Outcome" [--role backend]
-  node bin/factory.mjs run [project] [--pipeline ID] [--concurrency 3]
-  node bin/factory.mjs status [project]
-  node bin/factory.mjs list [project]
-  node bin/factory.mjs worktree [project] --id TASK_ID
-  node bin/factory.mjs integrate [project] --id TASK_ID
-  node bin/factory.mjs verify [project] [--id TASK_ID]
-  node bin/factory.mjs review [project] [--id TASK_ID]
-  node bin/factory.mjs fix [project] [--id TASK_ID] [--retry]
-  node bin/factory.mjs release [project] --version "0.1.0-rc.1" [--id TASK_ID]
-  node bin/factory.mjs approve [project] --id TASK_ID --by "Owner" [--release REL_ID]
-  node bin/factory.mjs resume [project] [--pipeline ID]
-  node bin/factory.mjs cancel [project] --id TASK_ID [--reason "..."]
-  node bin/factory.mjs logs [project] [--limit 50]
-  node bin/factory.mjs agents
-  node bin/factory.mjs serve [project] [--port 4177]
+  factory version
+  factory doctor [project]
+  factory init [project] [--profile auto|web|mobile|desktop|game|ai|iot|legacy|enterprise|generic] [--offline] [--dry-run] [--factory-only] [--skip-external]
+  factory plan [project] --goal "Requirements..." [--roles backend,frontend,database]
+  factory create [project] --name "Task" --criteria "Outcome" [--role backend]
+  factory run [project] [--pipeline ID] [--concurrency 3]
+  factory status [project]
+  factory list [project]
+  factory worktree [project] --id TASK_ID
+  factory integrate [project] --id TASK_ID
+  factory verify [project] [--id TASK_ID]
+  factory review [project] [--id TASK_ID]
+  factory fix [project] [--id TASK_ID] [--retry]
+  factory release [project] --version "0.1.0-rc.1" [--id TASK_ID]
+  factory approve [project] --id TASK_ID --by "Owner" [--release REL_ID]
+  factory resume [project] [--pipeline ID]
+  factory cancel [project] --id TASK_ID [--reason "..."]
+  factory logs [project] [--limit 50]
+  factory serve [project] [--port 4177]
+
+  factory update [--check] [--dry-run] [--yes] [--skills] [--no-skills] [--force] [--rollback] [--source <path-or-url>]
+  factory sync [project] [--dry-run] [--skills]
+  factory agents [list [--category ...]|select [project] --request "..."|explain [project] --request "..."]
+  factory skills <search|recommend|inspect|install|list|check|update|remove> ...
+  factory learn [project] [--task ID] [--from-feedback] [--statement "..."] [--category ...] [--explicit]
+  factory reflect [project]
+  factory memory <list|search|review|approve|reject|export|import|disable|delete|consolidate> ...
+  factory profile <show|set> [project] [name]
+  factory deploy <advise|plan> [project] [--target ...]
+  factory context <inspect|benchmark> [project] [--request "..."]
 
 No automatic push, merge or deployment commands.
 `;
@@ -631,19 +849,45 @@ function hasFlag(args, key) {
   return args.includes(`--${key}`);
 }
 
+function firstPos(args, idx = 0) {
+  const pos = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i].startsWith('--')) {
+      if (i + 1 < args.length && !args[i + 1].startsWith('--') && !['dry-run', 'factory-only', 'skip-external', 'offline', 'yes', 'check', 'rollback', 'force', 'skills', 'no-skills', 'approve', 'global', 'overwrite', 'explicit', 'from-feedback', 'retry', 'load-references', 'include-candidates', 'promote'].includes(args[i].slice(2))) {
+        i += 1;
+      }
+      continue;
+    }
+    pos.push(args[i]);
+  }
+  return pos[idx] || null;
+}
+
 const executed = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
 if (executed) {
   (async () => {
     try {
       const [command, ...args] = process.argv.slice(2);
-      const p = args[0] && !args[0].startsWith('--') ? args[0] : process.cwd();
+      const p = arg(args, 'project') || (args[0] && !args[0].startsWith('--') ? args[0] : process.cwd());
       let output;
       switch (command) {
+        case 'version': case '--version': case '-v': {
+          output = { version: VERSION, node: process.version, schema_version: CURRENT_SCHEMA_VERSION, specialists: SPECIALIST_AGENTS.length };
+          break;
+        }
         case 'init': {
           const full = !hasFlag(args, 'factory-only');
-          output = init(p, { name: arg(args, 'name'), full });
-          const inTest = process.execArgv.some(a => a.includes('test')) || Boolean(process.env.NODE_TEST_CONTEXT) || process.env.FACTORY_SKIP_EXTERNAL === '1';
-          if (full && !inTest) {
+          const dryRun = hasFlag(args, 'dry-run');
+          const offline = hasFlag(args, 'offline') || hasFlag(args, 'skip-external');
+          output = init(p, {
+            name: arg(args, 'name'),
+            full,
+            factoryOnly: hasFlag(args, 'factory-only'),
+            profile: arg(args, 'profile') || 'auto',
+            offline,
+            dryRun
+          });
+          if (full && !dryRun && !offline && !isTestEnv() && process.env.FACTORY_SKIP_EXTERNAL !== '1') {
             const home = process.env.USERPROFILE || process.env.HOME || '';
             output.external_skills = ensureExternalSkills({
               skillTargets: [join(home, '.gemini', 'config', 'skills'), join(home, '.cursor', 'skills')],
@@ -669,7 +913,302 @@ if (executed) {
         case 'resume': output = resume(p, { pipeline: arg(args, 'pipeline') }); break;
         case 'cancel': output = withDb(asPath(p), db => cancelTask({ db, project: syncProjectRecord(db, asPath(p)), taskId: arg(args, 'id'), reason: arg(args, 'reason') || 'Cancelled by operator' })); break;
         case 'logs': output = withDb(asPath(p), db => db.listLogs(projectIdForPath(asPath(p)), Number(arg(args, 'limit') || 50))); break;
-        case 'agents': output = Object.values(AGENT_ROLES); break;
+
+        case 'update': {
+          const targetDir = arg(args, 'target') || ROOT;
+          output = withDb(targetDir, db => {
+            const res = updateFactory({
+              targetDir,
+              source: arg(args, 'source'),
+              check: hasFlag(args, 'check'),
+              dryRun: hasFlag(args, 'dry-run'),
+              yes: hasFlag(args, 'yes'),
+              force: hasFlag(args, 'force'),
+              rollback: hasFlag(args, 'rollback'),
+              rollbackId: arg(args, 'rollback-id'),
+              db,
+              globalHome: resolveGlobalHomeDir(targetDir)
+            });
+            return res;
+          });
+          if (hasFlag(args, 'skills') && !hasFlag(args, 'no-skills') && output?.ok && !hasFlag(args, 'dry-run') && !hasFlag(args, 'check')) {
+            output.skill_updates = updateSkills({ projectPath: process.cwd(), offline: hasFlag(args, 'offline') });
+          }
+          break;
+        }
+
+        case 'sync': {
+          output = syncProject({
+            projectPath: p,
+            factoryRoot: ROOT,
+            dryRun: hasFlag(args, 'dry-run'),
+            skills: hasFlag(args, 'skills')
+          });
+          break;
+        }
+
+        case 'agents': {
+          const sub = firstPos(args, 0);
+          if (!sub) {
+            output = Object.values(AGENT_ROLES);
+          } else if (sub === 'list') {
+            const cat = arg(args, 'category');
+            const filtered = cat ? SPECIALIST_AGENTS.filter(a => a.category === cat) : SPECIALIST_AGENTS;
+            output = {
+              total: filtered.length,
+              categories: AGENT_CATEGORIES,
+              specialists: filtered.map(a => ({ id: a.id, name: a.name, category: a.category, legacyRole: a.legacyRole, readonly: a.readonly }))
+            };
+          } else if (sub === 'select' || sub === 'explain') {
+            const projPath = asPath(firstPos(args, 1) || process.cwd());
+            const request = arg(args, 'request') || arg(args, 'goal') || '';
+            const stack = existsSync(projPath) ? inspectProjectStack(projPath, { includeRuntimes: false }) : { adapters: [] };
+            const detected = existsSync(projPath) ? detectProjectProfile(projPath, stack).profileId : 'generic';
+            const files = arg(args, 'files') ? arg(args, 'files').split(',').map(s => s.trim()) : [];
+            const sel = selectSpecialists({ request, profileId: detected, stack, files, risk: arg(args, 'risk') });
+            output = sub === 'explain' ? { ...sel, explanation: explainSelection(sel) } : sel;
+          } else {
+            throw new Error(`Unknown agents subcommand: ${sub}`);
+          }
+          break;
+        }
+
+        case 'skills': {
+          const sub = firstPos(args, 0) || 'list';
+          const offline = hasFlag(args, 'offline');
+          if (sub === 'search') {
+            const query = firstPos(args, 1) || arg(args, 'query') || '';
+            output = searchSkills(query, { projectPath: arg(args, 'project') || '.', offline });
+          } else if (sub === 'recommend') {
+            output = recommendSkills(firstPos(args, 1) || '.', { offline: true });
+          } else if (sub === 'inspect') {
+            const target = firstPos(args, 1);
+            must(target, 'Usage: factory skills inspect <skill-dir-or-name>');
+            const dir = existsSync(target) ? target : join(ROOT, '.agents', 'skills', target);
+            output = inspectSkillSecurity(dir);
+          } else if (sub === 'install') {
+            const spec = firstPos(args, 1);
+            const proj = asPath(arg(args, 'project') || process.cwd());
+            output = withDb(proj, db => installSkill(spec, {
+              projectPath: proj,
+              global: hasFlag(args, 'global'),
+              approve: hasFlag(args, 'approve'),
+              offline,
+              overwrite: hasFlag(args, 'overwrite'),
+              db,
+              globalHome: resolveGlobalHomeDir(proj)
+            }));
+          } else if (sub === 'list') {
+            const proj = asPath(firstPos(args, 1) || process.cwd());
+            output = existsSync(join(store(proj), 'config.json'))
+              ? withDb(proj, db => listSkills({ projectPath: proj, db }))
+              : listSkills({ projectPath: proj, db: null });
+          } else if (sub === 'check') {
+            output = checkSkills({ projectPath: firstPos(args, 1) || '.' });
+          } else if (sub === 'update') {
+            const proj = asPath(firstPos(args, 1) || process.cwd());
+            output = withDb(proj, db => updateSkills({ projectPath: proj, offline, db }));
+          } else if (sub === 'remove') {
+            const name = firstPos(args, 1);
+            must(name, 'Usage: factory skills remove <skill-name>');
+            const proj = asPath(arg(args, 'project') || process.cwd());
+            output = existsSync(join(store(proj), 'factory.db'))
+              ? withDb(proj, db => removeSkill(name, { projectPath: proj, db }))
+              : removeSkill(name, { projectPath: proj, db: null });
+          } else {
+            throw new Error(`Unknown skills subcommand: ${sub}`);
+          }
+          break;
+        }
+
+        case 'learn': {
+          const projPath = asPath(p);
+          requireInit(projPath);
+          output = withDb(projPath, db => {
+            const gDb = resolveGlobalMemoryDb(projPath);
+            try {
+              return learnFromProject({
+                projectPath: projPath,
+                projectDb: db,
+                globalDb: gDb,
+                taskId: arg(args, 'task'),
+                fromFeedback: hasFlag(args, 'from-feedback'),
+                statement: arg(args, 'statement'),
+                category: arg(args, 'category') || 'engineering',
+                explicit: hasFlag(args, 'explicit'),
+                evidence: arg(args, 'evidence')
+              });
+            } finally {
+              gDb.close();
+            }
+          });
+          break;
+        }
+
+        case 'reflect': {
+          const projPath = asPath(p);
+          requireInit(projPath);
+          output = withDb(projPath, db => {
+            const proj = syncProjectRecord(db, projPath);
+            return proposeImprovements({ projectDb: db, projectId: proj.id });
+          });
+          break;
+        }
+
+        case 'memory': {
+          const sub = firstPos(args, 0) || 'list';
+          const projPath = asPath(arg(args, 'project') || process.cwd());
+          const hasProjDb = existsSync(join(store(projPath), 'config.json'));
+          const gDb = resolveGlobalMemoryDb(projPath);
+          try {
+            if (sub === 'list') {
+              const scope = arg(args, 'scope');
+              const globalRows = scope === 'project' ? [] : gDb.listMemories({ scope: 'global', category: arg(args, 'category'), status: arg(args, 'status') || 'active', limit: Number(arg(args, 'limit') || 100) });
+              const projRows = hasProjDb && scope !== 'global'
+                ? withDb(projPath, db => db.listMemories({ scope: 'project', projectId: projectIdForPath(projPath), category: arg(args, 'category'), status: arg(args, 'status') || 'active', limit: Number(arg(args, 'limit') || 100) }))
+                : [];
+              output = { global: globalRows, project: projRows };
+            } else if (sub === 'search') {
+              const q = firstPos(args, 1) || arg(args, 'query') || '';
+              const globalMatches = gDb.listMemories({ query: q, limit: 50 });
+              const projMatches = hasProjDb ? withDb(projPath, db => db.listMemories({ projectId: projectIdForPath(projPath), query: q, limit: 50 })) : [];
+              output = { query: q, global: globalMatches, project: projMatches };
+            } else if (sub === 'review') {
+              const globalCand = gDb.listMemories({ scope: 'global', verificationStatus: 'candidate', status: 'active', limit: 100 });
+              const projCand = hasProjDb ? withDb(projPath, db => db.listMemories({ projectId: projectIdForPath(projPath), verificationStatus: 'candidate', status: 'active', limit: 100 })) : [];
+              output = { pending_global: globalCand, pending_project: projCand };
+            } else if (sub === 'approve') {
+              const id = arg(args, 'id') || firstPos(args, 1);
+              must(id, 'Usage: factory memory approve --id <mem-id>');
+              if (gDb.getMemory(id)) {
+                output = approveMemory(gDb, id, { by: arg(args, 'by') || 'owner' });
+                syncGlobalMemoryViews(resolveGlobalHomeDir(projPath), gDb);
+              } else if (hasProjDb) {
+                output = withDb(projPath, db => approveMemory(db, id, { by: arg(args, 'by') || 'owner', promoteToGlobalDb: hasFlag(args, 'promote') ? gDb : null }));
+                syncGlobalMemoryViews(resolveGlobalHomeDir(projPath), gDb);
+              } else {
+                throw new Error(`Memory not found: ${id}`);
+              }
+            } else if (sub === 'reject') {
+              const id = arg(args, 'id') || firstPos(args, 1);
+              must(id, 'Usage: factory memory reject --id <mem-id>');
+              output = gDb.getMemory(id)
+                ? rejectMemory(gDb, id, arg(args, 'reason') || 'Rejected')
+                : withDb(projPath, db => rejectMemory(db, id, arg(args, 'reason') || 'Rejected'));
+            } else if (sub === 'disable') {
+              const id = arg(args, 'id') || firstPos(args, 1);
+              must(id, 'Usage: factory memory disable --id <mem-id>');
+              output = gDb.getMemory(id) ? disableMemory(gDb, id) : withDb(projPath, db => disableMemory(db, id));
+            } else if (sub === 'delete') {
+              const id = arg(args, 'id') || firstPos(args, 1);
+              must(id, 'Usage: factory memory delete --id <mem-id>');
+              output = gDb.getMemory(id) ? deleteMemory(gDb, id) : withDb(projPath, db => deleteMemory(db, id));
+            } else if (sub === 'consolidate') {
+              output = {
+                global: consolidateMemories(gDb),
+                project: hasProjDb ? withDb(projPath, db => consolidateMemories(db, { projectId: projectIdForPath(projPath) })) : null
+              };
+            } else if (sub === 'export') {
+              const filePath = arg(args, 'file') || firstPos(args, 1) || join(projPath, 'factory-memory-export.json');
+              output = exportMemories(gDb, {
+                filePath,
+                scope: arg(args, 'scope'),
+                includeCandidates: hasFlag(args, 'include-candidates'),
+                passphrase: arg(args, 'passphrase')
+              });
+            } else if (sub === 'import') {
+              const filePath = firstPos(args, 1) || arg(args, 'file');
+              must(filePath, 'Usage: factory memory import <file> [--passphrase "..."]');
+              output = importMemories(gDb, filePath, { passphrase: arg(args, 'passphrase') });
+              syncGlobalMemoryViews(resolveGlobalHomeDir(projPath), gDb);
+            } else {
+              throw new Error(`Unknown memory subcommand: ${sub}`);
+            }
+          } finally {
+            gDb.close();
+          }
+          break;
+        }
+
+        case 'profile': {
+          const sub = firstPos(args, 0) || 'show';
+          if (sub === 'show') {
+            const projPath = asPath(firstPos(args, 1) || '.');
+            const stack = inspectProjectStack(projPath, { includeRuntimes: false });
+            const det = detectProjectProfile(projPath, stack);
+            const saved = existsSync(join(store(projPath), 'config.json'))
+              ? withDb(projPath, db => db.getProjectProfile(projectIdForPath(projPath)))
+              : null;
+            const activeId = saved?.profile_id || det.profileId;
+            output = { project: projPath, active_profile: activeId, saved_override: saved?.override_by || null, detected: det.profileId, profile: PROJECT_PROFILES[activeId] };
+          } else if (sub === 'set') {
+            const a1 = firstPos(args, 1);
+            const a2 = firstPos(args, 2);
+            const projPath = a2 ? asPath(a1) : process.cwd();
+            const rawProf = a2 || a1;
+            must(rawProf, 'Usage: factory profile set [project] <profile-name>');
+            requireInit(projPath);
+            const norm = normalizeProfileId(rawProf);
+            const resolvedProf = norm === 'auto' ? detectProjectProfile(projPath, inspectProjectStack(projPath, { includeRuntimes: false })).profileId : norm;
+            output = withDb(projPath, db => {
+              const proj = syncProjectRecord(db, projPath);
+              const res = db.setProjectProfile(proj.id, { profileId: resolvedProf, detectedStack: proj.adapter_ids, overrideBy: 'operator' });
+              syncProjectMemoryViews(projPath, db, proj.id);
+              return res;
+            });
+          } else {
+            throw new Error(`Unknown profile subcommand: ${sub}`);
+          }
+          break;
+        }
+
+        case 'deploy': {
+          const sub = firstPos(args, 0) || 'advise';
+          const projPath = asPath(firstPos(args, 1) || '.');
+          const hasProjDb = existsSync(join(store(projPath), 'config.json'));
+          const gDb = resolveGlobalMemoryDb(projPath);
+          try {
+            if (sub === 'advise') {
+              output = hasProjDb
+                ? withDb(projPath, db => adviseDeployment({ projectPath: projPath, projectDb: db, globalDb: gDb }))
+                : adviseDeployment({ projectPath: projPath, globalDb: gDb });
+            } else if (sub === 'plan') {
+              output = hasProjDb
+                ? withDb(projPath, db => generateDeploymentPlan({ projectPath: projPath, projectDb: db, globalDb: gDb, target: arg(args, 'target') }))
+                : generateDeploymentPlan({ projectPath: projPath, globalDb: gDb, target: arg(args, 'target') });
+            } else {
+              throw new Error(`Unknown deploy subcommand: ${sub}`);
+            }
+          } finally {
+            gDb.close();
+          }
+          break;
+        }
+
+        case 'context': {
+          const sub = firstPos(args, 0) || 'inspect';
+          const projPath = asPath(firstPos(args, 1) || '.');
+          const hasProjDb = existsSync(join(store(projPath), 'config.json'));
+          const gDb = resolveGlobalMemoryDb(projPath);
+          try {
+            if (sub === 'inspect') {
+              const request = arg(args, 'request') || 'Inspect project context';
+              output = hasProjDb
+                ? withDb(projPath, db => buildTaskContext({ projectPath: projPath, projectDb: db, globalDb: gDb, request, loadReferences: hasFlag(args, 'load-references') }))
+                : buildTaskContext({ projectPath: projPath, globalDb: gDb, request, loadReferences: hasFlag(args, 'load-references') });
+            } else if (sub === 'benchmark') {
+              output = hasProjDb
+                ? withDb(projPath, db => runContextBenchmark({ projectPath: projPath, projectDb: db, globalDb: gDb }))
+                : runContextBenchmark({ projectPath: projPath, globalDb: gDb });
+            } else {
+              throw new Error(`Unknown context subcommand: ${sub}`);
+            }
+          } finally {
+            gDb.close();
+          }
+          break;
+        }
+
         case 'serve': {
           const port = Number(arg(args, 'port') || 4177);
           serve(p, port);
@@ -680,7 +1219,7 @@ if (executed) {
         default: throw new Error(`Unknown command: ${command}\n${help()}`);
       }
       if (output) console.log(redactSecrets(JSON.stringify(output, null, 2)));
-      if ((command === 'verify' || command === 'test' || command === 'release' || command === 'review') && output && output.ok === false) {
+      if ((command === 'verify' || command === 'test' || command === 'release' || command === 'review' || (command === 'skills' && firstPos(args, 0) === 'check') || command === 'update') && output && output.ok === false) {
         process.exitCode = 1;
       }
     } catch (e) {
