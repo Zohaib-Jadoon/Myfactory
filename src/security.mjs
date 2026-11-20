@@ -194,3 +194,26 @@ export function enforceSafetyPolicy(rawConfig = {}) {
     allow_outside_root: false
   };
 }
+
+const SENSITIVE_MEMORY_PATTERNS = [
+  ...SECRET_CONTENT_PATTERNS.map(p => ({ id: p.id, re: p.re })),
+  { id: 'email-pii', re: /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i },
+  { id: 'ssn-pii', re: /\b\d{3}-\d{2}-\d{4}\b/ },
+  { id: 'payment-card', re: /\b(?:\d{4}[ -]?){3}\d{4}\b/ },
+  { id: 'jwt-or-bearer', re: /\bBearer\s+[A-Za-z0-9\-._~+/=]{12,}|\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/i },
+  { id: 'sql-conn-creds', re: /(?:Data Source|Initial Catalog|User ID|Uid)\s*=[^;]+;\s*(?:Password|Pwd)\s*=/i },
+  { id: 'biometric-template-blob', re: /\b(?:face_embedding|fingerprint_template|biometric_vector|face_descriptor|iris_code)\b[\s:=]+[\[{A-Za-z0-9+/=]/i },
+  { id: 'raw-embedding-array', re: /\[(?:\s*-?\d+\.\d+\s*,){5,}\s*-?\d+\.\d+\s*\]/ },
+  { id: 'base64-blob', re: /\b[A-Za-z0-9+/]{120,}={0,2}\b/ }
+];
+
+/** Detect secrets, connection strings, PII, and raw biometric templates before persisting memory. */
+export function detectSensitiveMemoryContent(text) {
+  if (!text) return { ok: true, reasons: [] };
+  const input = String(text);
+  const reasons = [];
+  for (const rule of SENSITIVE_MEMORY_PATTERNS) {
+    if (rule.re.test(input)) reasons.push(rule.id);
+  }
+  return { ok: reasons.length === 0, reasons: [...new Set(reasons)] };
+}
