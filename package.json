@@ -1,8 +1,8 @@
 {
   "name": "universal-software-factory-antigravity",
   "private": true,
-  "version": "0.2.0",
-  "description": "Universal AI Software Factory for Google Antigravity IDE with SQLite orchestration, 14 agents, quality gates, pstack, and Ponytail",
+  "version": "1.0.0",
+  "description": "Self-Improving, Memory-Powered Universal AI Software Engineering Factory for Antigravity IDE and Cursor IDE",
   "type": "module",
   "scripts": {
     "test": "node --test tests/*.test.mjs",

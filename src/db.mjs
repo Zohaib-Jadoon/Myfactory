@@ -1,176 +1,31 @@
 import { DatabaseSync } from 'node:sqlite';
-import { existsSync, mkdirSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { redactSecrets } from './security.mjs';
+import { getSchemaVersion, runMigrations } from './migrations.mjs';
+
+export function defaultGlobalHome() {
+  if (process.env.FACTORY_GLOBAL_HOME) return resolve(process.env.FACTORY_GLOBAL_HOME);
+  const home = process.env.USERPROFILE || process.env.HOME || homedir();
+  return join(home, '.gemini', 'factory');
+}
+
+export function defaultGlobalMemoryDbPath() {
+  if (process.env.FACTORY_GLOBAL_MEMORY_DB) return resolve(process.env.FACTORY_GLOBAL_MEMORY_DB);
+  return join(defaultGlobalHome(), 'memory', 'global-memory.db');
+}
 
 export function defaultDbPath() {
   if (process.env.FACTORY_DB_PATH) return resolve(process.env.FACTORY_DB_PATH);
-  const home = process.env.USERPROFILE || process.env.HOME || homedir();
-  return join(home, '.gemini', 'factory', 'factory.db');
+  return join(defaultGlobalHome(), 'factory.db');
 }
 
 export function projectIdForPath(projectPath) {
   const norm = resolve(projectPath).toLowerCase();
   return createHash('sha256').update(norm).digest('hex').slice(0, 16);
 }
-
-const SCHEMA_SQL = `
-PRAGMA journal_mode = WAL;
-PRAGMA foreign_keys = ON;
-
-CREATE TABLE IF NOT EXISTS projects (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  path TEXT NOT NULL UNIQUE,
-  adapter_ids TEXT NOT NULL DEFAULT '[]',
-  config_json TEXT NOT NULL,
-  config_hash TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS pipelines (
-  id TEXT PRIMARY KEY,
-  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  goal TEXT NOT NULL,
-  current_stage TEXT NOT NULL,
-  status TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS tasks (
-  id TEXT PRIMARY KEY,
-  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  pipeline_id TEXT REFERENCES pipelines(id) ON DELETE SET NULL,
-  title TEXT NOT NULL,
-  criteria TEXT NOT NULL,
-  stage TEXT NOT NULL DEFAULT 'implementation',
-  agent_role TEXT NOT NULL DEFAULT 'backend',
-  status TEXT NOT NULL DEFAULT 'queued',
-  priority INTEGER NOT NULL DEFAULT 50,
-  depends_on_json TEXT NOT NULL DEFAULT '[]',
-  branch TEXT,
-  worktree TEXT,
-  attempts INTEGER NOT NULL DEFAULT 0,
-  max_retries INTEGER NOT NULL DEFAULT 2,
-  lease_owner TEXT,
-  lease_expires_at TEXT,
-  last_error TEXT,
-  verification_json TEXT,
-  approval_json TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS task_history (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  task_id TEXT NOT NULL,
-  project_id TEXT NOT NULL,
-  event TEXT NOT NULL,
-  actor TEXT,
-  detail TEXT,
-  created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS execution_logs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  pipeline_id TEXT,
-  task_id TEXT,
-  agent_role TEXT,
-  level TEXT NOT NULL DEFAULT 'info',
-  message TEXT NOT NULL,
-  created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS gate_runs (
-  id TEXT PRIMARY KEY,
-  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  task_id TEXT,
-  revision TEXT,
-  dirty INTEGER NOT NULL DEFAULT 0,
-  config_hash TEXT NOT NULL,
-  ok INTEGER NOT NULL DEFAULT 0,
-  results_json TEXT NOT NULL,
-  metrics_json TEXT NOT NULL DEFAULT '{}',
-  created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS security_findings (
-  id TEXT PRIMARY KEY,
-  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  task_id TEXT,
-  severity TEXT NOT NULL,
-  category TEXT NOT NULL,
-  file_path TEXT,
-  line_number INTEGER DEFAULT 0,
-  summary TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'open',
-  created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS review_findings (
-  id TEXT PRIMARY KEY,
-  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  task_id TEXT,
-  reviewer_role TEXT NOT NULL,
-  severity TEXT NOT NULL,
-  summary TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'open',
-  created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS releases (
-  id TEXT PRIMARY KEY,
-  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  task_id TEXT,
-  version TEXT NOT NULL,
-  revision TEXT,
-  gate_run_id TEXT,
-  status TEXT NOT NULL,
-  notes TEXT NOT NULL,
-  rollback_plan TEXT NOT NULL,
-  approved_by TEXT,
-  approved_at TEXT,
-  created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS approvals (
-  id TEXT PRIMARY KEY,
-  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  task_id TEXT,
-  release_id TEXT,
-  action TEXT NOT NULL,
-  requested_by TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending',
-  decided_by TEXT,
-  reason TEXT,
-  revision TEXT,
-  created_at TEXT NOT NULL,
-  decided_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS agent_runs (
-  id TEXT PRIMARY KEY,
-  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  pipeline_id TEXT,
-  task_id TEXT,
-  agent_role TEXT NOT NULL,
-  provider TEXT NOT NULL,
-  status TEXT NOT NULL,
-  started_at TEXT NOT NULL,
-  finished_at TEXT,
-  output_summary TEXT,
-  error TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_tasks_project_status ON tasks(project_id, status);
-CREATE INDEX IF NOT EXISTS idx_logs_project_time ON execution_logs(project_id, id DESC);
-CREATE INDEX IF NOT EXISTS idx_gates_project_time ON gate_runs(project_id, created_at DESC);
-`;
 
 const stamp = () => new Date().toISOString();
 
@@ -179,12 +34,13 @@ function safeJsonParse(raw, fallback) {
   try { return JSON.parse(raw); } catch { return fallback; }
 }
 
-/** Open and initialize the SQLite factory store. */
+/** Open and initialize or migrate the SQLite factory store. */
 export function openFactoryDb(dbPath = defaultDbPath()) {
   const fullPath = resolve(dbPath);
   mkdirSync(dirname(fullPath), { recursive: true });
   const db = new DatabaseSync(fullPath);
-  db.exec(SCHEMA_SQL);
+  db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
+  runMigrations(db);
 
   const stmts = {
     upsertProject: db.prepare(`
@@ -278,8 +134,140 @@ export function openFactoryDb(dbPath = defaultDbPath()) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `),
     finishAgentRun: db.prepare('UPDATE agent_runs SET status = ?, finished_at = ?, output_summary = ?, error = ? WHERE id = ?'),
-    listAgentRuns: db.prepare('SELECT * FROM agent_runs WHERE project_id = ? ORDER BY started_at DESC LIMIT ?')
+    listAgentRuns: db.prepare('SELECT * FROM agent_runs WHERE project_id = ? ORDER BY started_at DESC LIMIT ?'),
+
+    upsertProfile: db.prepare(`
+      INSERT INTO project_profiles (project_id, profile_id, detected_stack_json, override_by, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(project_id) DO UPDATE SET
+        profile_id = excluded.profile_id,
+        detected_stack_json = excluded.detected_stack_json,
+        override_by = excluded.override_by,
+        updated_at = excluded.updated_at
+    `),
+    getProfile: db.prepare('SELECT * FROM project_profiles WHERE project_id = ?'),
+
+    upsertMemory: db.prepare(`
+      INSERT INTO memories (
+        id, type, scope, project_id, category, statement, evidence_ref, source_type,
+        confidence, verification_status, tags_json, profile_scope, version, status,
+        fingerprint, created_at, updated_at, last_used_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        type = excluded.type,
+        scope = excluded.scope,
+        project_id = excluded.project_id,
+        category = excluded.category,
+        statement = excluded.statement,
+        evidence_ref = excluded.evidence_ref,
+        source_type = excluded.source_type,
+        confidence = excluded.confidence,
+        verification_status = excluded.verification_status,
+        tags_json = excluded.tags_json,
+        profile_scope = excluded.profile_scope,
+        version = excluded.version,
+        status = excluded.status,
+        fingerprint = excluded.fingerprint,
+        updated_at = excluded.updated_at,
+        last_used_at = excluded.last_used_at
+    `),
+    getMemory: db.prepare('SELECT * FROM memories WHERE id = ?'),
+    findMemoryByFingerprint: db.prepare('SELECT * FROM memories WHERE fingerprint = ? LIMIT 1'),
+    updateMemoryStatus: db.prepare('UPDATE memories SET status = ?, verification_status = ?, updated_at = ? WHERE id = ?'),
+    touchMemory: db.prepare('UPDATE memories SET last_used_at = ? WHERE id = ?'),
+    deleteMemory: db.prepare('DELETE FROM memories WHERE id = ?'),
+
+    upsertSkill: db.prepare(`
+      INSERT INTO skill_registry (
+        name, source, source_type, version_ref, commit_sha, sha256, license,
+        compatible_ides_json, required_tools_json, install_status, approval_status,
+        dependencies_json, security_summary, installed_paths_json, last_verified_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(name) DO UPDATE SET
+        source = excluded.source,
+        source_type = excluded.source_type,
+        version_ref = excluded.version_ref,
+        commit_sha = excluded.commit_sha,
+        sha256 = excluded.sha256,
+        license = excluded.license,
+        compatible_ides_json = excluded.compatible_ides_json,
+        required_tools_json = excluded.required_tools_json,
+        install_status = excluded.install_status,
+        approval_status = excluded.approval_status,
+        dependencies_json = excluded.dependencies_json,
+        security_summary = excluded.security_summary,
+        installed_paths_json = excluded.installed_paths_json,
+        last_verified_at = excluded.last_verified_at,
+        updated_at = excluded.updated_at
+    `),
+    getSkill: db.prepare('SELECT * FROM skill_registry WHERE name = ?'),
+    listSkills: db.prepare('SELECT * FROM skill_registry ORDER BY name ASC'),
+    deleteSkill: db.prepare('DELETE FROM skill_registry WHERE name = ?'),
+
+    addRouting: db.prepare(`
+      INSERT INTO routing_decisions (
+        id, project_id, task_id, request_summary, profile_id, complexity,
+        primary_agent, supporting_agents_json, selected_skills_json, references_json,
+        estimated_budget_chars, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `),
+    listRoutingByProject: db.prepare('SELECT * FROM routing_decisions WHERE project_id = ? ORDER BY created_at DESC LIMIT ?'),
+    listAllRouting: db.prepare('SELECT * FROM routing_decisions ORDER BY created_at DESC LIMIT ?'),
+
+    addContextMetric: db.prepare(`
+      INSERT INTO context_metrics (
+        id, project_id, task_id, mode, input_tokens, output_tokens,
+        estimated_context_bytes, baseline_context_bytes, duration_ms,
+        agent_invocations, cost_usd, retry_count, success, verification_coverage, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `),
+    listContextByProject: db.prepare('SELECT * FROM context_metrics WHERE project_id = ? ORDER BY created_at DESC LIMIT ?'),
+    listAllContext: db.prepare('SELECT * FROM context_metrics ORDER BY created_at DESC LIMIT ?'),
+
+    addUpdateEvent: db.prepare(`
+      INSERT INTO update_history (id, from_version, to_version, from_commit, to_commit, action, status, backup_path, details_json, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `),
+    listUpdateHistory: db.prepare('SELECT * FROM update_history ORDER BY created_at DESC LIMIT ?'),
+
+    upsertImprovement: db.prepare(`
+      INSERT INTO improvement_proposals (id, category, title, hypothesis, evidence_json, status, metrics_before_json, metrics_after_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        status = excluded.status,
+        evidence_json = excluded.evidence_json,
+        metrics_before_json = excluded.metrics_before_json,
+        metrics_after_json = excluded.metrics_after_json,
+        updated_at = excluded.updated_at
+    `),
+    listImprovements: db.prepare('SELECT * FROM improvement_proposals ORDER BY updated_at DESC LIMIT ?'),
+
+    addDeploymentAdvice: db.prepare(`
+      INSERT INTO deployment_advice (id, project_id, profile_id, recommended_platform, options_json, plan_markdown, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `),
+    listDeploymentAdviceByProject: db.prepare('SELECT * FROM deployment_advice WHERE project_id = ? ORDER BY created_at DESC LIMIT ?'),
+    listAllDeploymentAdvice: db.prepare('SELECT * FROM deployment_advice ORDER BY created_at DESC LIMIT ?')
   };
+
+  function hydrateMemory(row) {
+    if (!row) return null;
+    return {
+      ...row,
+      tags: safeJsonParse(row.tags_json, [])
+    };
+  }
+
+  function hydrateSkill(row) {
+    if (!row) return null;
+    return {
+      ...row,
+      compatible_ides: safeJsonParse(row.compatible_ides_json, []),
+      required_tools: safeJsonParse(row.required_tools_json, []),
+      dependencies: safeJsonParse(row.dependencies_json, []),
+      installed_paths: safeJsonParse(row.installed_paths_json, [])
+    };
+  }
 
   function hydrateTask(row) {
     if (!row) return null;
@@ -536,6 +524,280 @@ export function openFactoryDb(dbPath = defaultDbPath()) {
 
     listAgentRuns(projectId, limit = 50) {
       return stmts.listAgentRuns.all(projectId, limit);
+    },
+
+    schemaVersion() {
+      return getSchemaVersion(db);
+    },
+
+    checkpoint() {
+      db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    },
+
+    setProjectProfile(projectId, { profileId, detectedStack = [], overrideBy = null }) {
+      const now = stamp();
+      stmts.upsertProfile.run(projectId, profileId, JSON.stringify(detectedStack), overrideBy, now);
+      return this.getProjectProfile(projectId);
+    },
+
+    getProjectProfile(projectId) {
+      const row = stmts.getProfile.get(projectId);
+      if (!row) return null;
+      return { ...row, detected_stack: safeJsonParse(row.detected_stack_json, []) };
+    },
+
+    upsertMemory(entry) {
+      const now = stamp();
+      const id = entry.id || `mem-${randomUUID().slice(0, 10)}`;
+      stmts.upsertMemory.run(
+        id,
+        entry.type || 'observation',
+        entry.scope || 'project',
+        entry.project_id || null,
+        entry.category || 'engineering',
+        redactSecrets(entry.statement || ''),
+        entry.evidence_ref ? redactSecrets(entry.evidence_ref) : null,
+        entry.source_type || 'system',
+        Number(entry.confidence ?? 0.5),
+        entry.verification_status || 'candidate',
+        JSON.stringify(entry.tags || []),
+        entry.profile_scope || null,
+        Number(entry.version ?? 1),
+        entry.status || 'active',
+        entry.fingerprint,
+        entry.created_at || now,
+        entry.updated_at || now,
+        entry.last_used_at || null
+      );
+      return this.getMemory(id);
+    },
+
+    getMemory(id) {
+      return hydrateMemory(stmts.getMemory.get(id));
+    },
+
+    findMemoryByFingerprint(fingerprint) {
+      return hydrateMemory(stmts.findMemoryByFingerprint.get(fingerprint));
+    },
+
+    listMemories({ scope = null, projectId = null, category = null, status = null, verificationStatus = null, profileScope = null, query = null, limit = 100 } = {}) {
+      const clauses = [];
+      const params = [];
+      if (scope) { clauses.push('scope = ?'); params.push(scope); }
+      if (projectId) { clauses.push('project_id = ?'); params.push(projectId); }
+      if (category) { clauses.push('category = ?'); params.push(category); }
+      if (status) { clauses.push('status = ?'); params.push(status); }
+      if (verificationStatus) { clauses.push('verification_status = ?'); params.push(verificationStatus); }
+      if (profileScope) { clauses.push('profile_scope = ?'); params.push(profileScope); }
+      if (query) {
+        clauses.push('(LOWER(statement) LIKE ? OR LOWER(category) LIKE ? OR LOWER(tags_json) LIKE ?)');
+        const q = `%${String(query).toLowerCase()}%`;
+        params.push(q, q, q);
+      }
+      const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+      const sql = `SELECT * FROM memories ${where} ORDER BY updated_at DESC LIMIT ?`;
+      params.push(Number(limit));
+      return db.prepare(sql).all(...params).map(hydrateMemory);
+    },
+
+    updateMemoryStatus(id, { status, verification_status }) {
+      const cur = this.getMemory(id);
+      if (!cur) return null;
+      stmts.updateMemoryStatus.run(
+        status ?? cur.status,
+        verification_status ?? cur.verification_status,
+        stamp(),
+        id
+      );
+      return this.getMemory(id);
+    },
+
+    touchMemories(ids = []) {
+      const now = stamp();
+      for (const id of ids) {
+        stmts.touchMemory.run(now, id);
+      }
+    },
+
+    deleteMemory(id) {
+      const cur = this.getMemory(id);
+      stmts.deleteMemory.run(id);
+      return cur;
+    },
+
+    upsertSkillRecord(rec) {
+      const now = stamp();
+      stmts.upsertSkill.run(
+        rec.name,
+        rec.source || 'local',
+        rec.source_type || 'local',
+        rec.version_ref || null,
+        rec.commit_sha || null,
+        rec.sha256 || null,
+        rec.license || null,
+        JSON.stringify(rec.compatible_ides || ['antigravity', 'cursor']),
+        JSON.stringify(rec.required_tools || []),
+        rec.install_status || 'installed',
+        rec.approval_status || 'allowlisted',
+        JSON.stringify(rec.dependencies || []),
+        rec.security_summary || null,
+        JSON.stringify(rec.installed_paths || []),
+        rec.last_verified_at || now,
+        now
+      );
+      return this.getSkillRecord(rec.name);
+    },
+
+    getSkillRecord(name) {
+      return hydrateSkill(stmts.getSkill.get(name));
+    },
+
+    listSkillRecords() {
+      return stmts.listSkills.all().map(hydrateSkill);
+    },
+
+    deleteSkillRecord(name) {
+      stmts.deleteSkill.run(name);
+    },
+
+    recordRoutingDecision(rec) {
+      const id = rec.id || `route-${randomUUID().slice(0, 8)}`;
+      const now = stamp();
+      stmts.addRouting.run(
+        id,
+        rec.project_id || null,
+        rec.task_id || null,
+        redactSecrets(rec.request_summary || ''),
+        rec.profile_id || null,
+        rec.complexity || 'STANDARD',
+        rec.primary_agent,
+        JSON.stringify(rec.supporting_agents || []),
+        JSON.stringify(rec.selected_skills || []),
+        JSON.stringify(rec.references || []),
+        rec.estimated_budget_chars ?? null,
+        now
+      );
+      return id;
+    },
+
+    listRoutingDecisions(projectId = null, limit = 50) {
+      const rows = projectId
+        ? stmts.listRoutingByProject.all(projectId, limit)
+        : stmts.listAllRouting.all(limit);
+      return rows.map(r => ({
+        ...r,
+        supporting_agents: safeJsonParse(r.supporting_agents_json, []),
+        selected_skills: safeJsonParse(r.selected_skills_json, []),
+        references: safeJsonParse(r.references_json, [])
+      }));
+    },
+
+    recordContextMetric(rec) {
+      const id = rec.id || `ctx-${randomUUID().slice(0, 8)}`;
+      stmts.addContextMetric.run(
+        id,
+        rec.project_id || null,
+        rec.task_id || null,
+        rec.mode || 'STANDARD',
+        rec.input_tokens ?? null,
+        rec.output_tokens ?? null,
+        Number(rec.estimated_context_bytes || 0),
+        rec.baseline_context_bytes ?? null,
+        rec.duration_ms ?? null,
+        Number(rec.agent_invocations ?? 1),
+        rec.cost_usd ?? null,
+        Number(rec.retry_count ?? 0),
+        rec.success == null ? null : (rec.success ? 1 : 0),
+        rec.verification_coverage ?? null,
+        stamp()
+      );
+      return id;
+    },
+
+    listContextMetrics(projectId = null, limit = 50) {
+      const rows = projectId
+        ? stmts.listContextByProject.all(projectId, limit)
+        : stmts.listAllContext.all(limit);
+      return rows.map(r => ({
+        ...r,
+        success: r.success == null ? null : Boolean(r.success)
+      }));
+    },
+
+    recordUpdateEvent(rec) {
+      const id = rec.id || `upd-${randomUUID().slice(0, 8)}`;
+      stmts.addUpdateEvent.run(
+        id,
+        rec.from_version || null,
+        rec.to_version || null,
+        rec.from_commit || null,
+        rec.to_commit || null,
+        rec.action || 'update',
+        rec.status || 'completed',
+        rec.backup_path || null,
+        JSON.stringify(rec.details || {}),
+        stamp()
+      );
+      return id;
+    },
+
+    listUpdateHistory(limit = 30) {
+      return stmts.listUpdateHistory.all(limit).map(r => ({
+        ...r,
+        details: safeJsonParse(r.details_json, {})
+      }));
+    },
+
+    upsertImprovementProposal(rec) {
+      const now = stamp();
+      const id = rec.id || `imp-${randomUUID().slice(0, 8)}`;
+      stmts.upsertImprovement.run(
+        id,
+        rec.category || 'routing',
+        rec.title,
+        rec.hypothesis,
+        JSON.stringify(rec.evidence || {}),
+        rec.status || 'proposed',
+        rec.metrics_before ? JSON.stringify(rec.metrics_before) : null,
+        rec.metrics_after ? JSON.stringify(rec.metrics_after) : null,
+        rec.created_at || now,
+        now
+      );
+      return id;
+    },
+
+    listImprovementProposals(status = null, limit = 50) {
+      const rows = stmts.listImprovements.all(limit).map(r => ({
+        ...r,
+        evidence: safeJsonParse(r.evidence_json, {}),
+        metrics_before: safeJsonParse(r.metrics_before_json, null),
+        metrics_after: safeJsonParse(r.metrics_after_json, null)
+      }));
+      return status ? rows.filter(r => r.status === status) : rows;
+    },
+
+    recordDeploymentAdvice(rec) {
+      const id = rec.id || `dep-${randomUUID().slice(0, 8)}`;
+      stmts.addDeploymentAdvice.run(
+        id,
+        rec.project_id || null,
+        rec.profile_id || null,
+        rec.recommended_platform,
+        JSON.stringify(rec.options || []),
+        rec.plan_markdown || null,
+        stamp()
+      );
+      return id;
+    },
+
+    listDeploymentAdvice(projectId = null, limit = 20) {
+      const rows = projectId
+        ? stmts.listDeploymentAdviceByProject.all(projectId, limit)
+        : stmts.listAllDeploymentAdvice.all(limit);
+      return rows.map(r => ({
+        ...r,
+        options: safeJsonParse(r.options_json, [])
+      }));
     }
   };
 }

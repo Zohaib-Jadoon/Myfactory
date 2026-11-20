@@ -196,6 +196,68 @@ export const BUILTIN_ADAPTERS = [
       return existsSync(join(dir, 'Dockerfile')) || existsSync(join(dir, 'docker-compose.yml')) || existsSync(join(dir, 'compose.yaml'));
     },
     checks: () => []
+  },
+  {
+    id: 'prisma',
+    label: 'Prisma ORM',
+    detect(dir) {
+      return existsSync(join(dir, 'prisma', 'schema.prisma'));
+    },
+    checks: () => []
+  },
+  {
+    id: 'iis_asp',
+    label: 'Windows IIS / Classic ASP',
+    detect(dir) {
+      return existsSync(join(dir, 'web.config')) || hasAnyFile(dir, f => /\.asp$/i.test(f));
+    },
+    checks: () => []
+  },
+  {
+    id: 'unity',
+    label: 'Unity Game Engine',
+    detect(dir) {
+      return existsSync(join(dir, 'ProjectSettings', 'ProjectVersion.txt')) || hasAnyFile(dir, f => /\.unity$/i.test(f));
+    },
+    checks: () => []
+  },
+  {
+    id: 'unreal',
+    label: 'Unreal Engine',
+    detect(dir) {
+      return hasAnyFile(dir, f => /\.uproject$/i.test(f));
+    },
+    checks: () => []
+  },
+  {
+    id: 'godot',
+    label: 'Godot Engine',
+    detect(dir) {
+      return existsSync(join(dir, 'project.godot'));
+    },
+    checks: () => []
+  },
+  {
+    id: 'iot',
+    label: 'IoT / Telemetry & Maps',
+    detect(dir) {
+      const pkg = readJson(join(dir, 'package.json'));
+      const req = existsSync(join(dir, 'requirements.txt')) ? readFileSync(join(dir, 'requirements.txt'), 'utf8') : '';
+      const deps = JSON.stringify({ ...pkg?.dependencies, ...pkg?.devDependencies }) + req;
+      return /\b(mqtt|socket\.io|ws|leaflet|@turf\/|gps|nmea|paho-mqtt)\b/i.test(deps);
+    },
+    checks: () => []
+  },
+  {
+    id: 'biometrics',
+    label: 'Biometric & Vision Recognition',
+    detect(dir) {
+      const pkg = readJson(join(dir, 'package.json'));
+      const req = existsSync(join(dir, 'requirements.txt')) ? readFileSync(join(dir, 'requirements.txt'), 'utf8') : '';
+      const deps = JSON.stringify({ ...pkg?.dependencies, ...pkg?.devDependencies }) + req;
+      return /\b(face-api|@vladmandic\/face-api|insightface|deepface|mediapipe|onnxruntime|opencv-python)\b/i.test(deps);
+    },
+    checks: () => []
   }
 ];
 

@@ -21,7 +21,7 @@ import {
 } from '../src/orchestrator.mjs';
 import { startDashboardServer } from '../src/dashboard.mjs';
 
-export const VERSION = '0.2.0';
+export const VERSION = '1.0.0';
 export const PSTACK_REPO = 'https://github.com/backnotprop/pstack.git';
 export const PONYTAIL_REPO = 'https://github.com/DietrichGebert/ponytail.git';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
