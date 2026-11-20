@@ -1,60 +1,29 @@
 # Factory Memory
 
-Durable operational log and state for the Universal AI Software Factory (Google Antigravity IDE, Windows 11).
+Durable operational log and verified engineering state for Myfactory (`v1.0.0`).
 
-## 1. Incident Investigation: Previous IDE Shutdown (2026-11-19)
+## 1. Incident Investigation Record (2026-11-19)
 
-**Conclusion (Verified from logs):** Antigravity IDE was restarted by its own built-in auto-updater (`v2.32.2` -> `v2.33.0`), NOT by any factory script, agent command, `taskkill`, or `Stop-Process`.
-
-### Supporting Evidence
-- **Conversation transcript (`transcript.jsonl`)**: Steps 0–20 (`12:12:51` to `12:13:18` +05:00) executed only read-only workspace inspection commands (`Get-ChildItem`, `node -v`, `read_file`). Zero destructive or process-terminating commands were issued.
-- **Antigravity Electron log (`%APPDATA%\Antigravity\logs\main.log`)**:
-  - `12:11:32.925`: `[AutoUpdater] Checking for update…`
-  - `12:11:33.415`: `Found version 2.33.0`
-  - `12:12:14.136`: `New version 2.33.0 has been downloaded to C:\Users\CP\AppData\Local\antigravity-updater\pending\Antigravity-x64.exe`
-  - `12:13:17.415`: `Shutting down language server…`
-  - `12:13:17.472`: `Auto install update on quit` -> `Executing: C:\Users\CP\AppData\Local\antigravity-updater\pending\Antigravity-x64.exe with args: --updated,/S`
-- **Antigravity Language Server startup log (`%USERPROFILE%\.gemini\antigravity\log\cli-20261119_121448.log`)**:
-  - `12:14:48.682`: `Language server version: 2.33.0` (restarted after auto-update completed).
-- **Separate OS events prior to session**: Windows System Event Log recorded BugChecks at `11:00:06` and `12:04:03` (`111926-8234-01.dmp`, `111926-7734-01.dmp`), both prior to this session's start at `12:11:22`.
-- **Secondary defect repaired**: `C:\Users\CP\.gemini\config\plugins\ponytail\plugin.json` contained a UTF-8 BOM (`\ufeff`), causing `plugins.go:502` JSON parse errors every 10 seconds. Removed BOM cleanly.
-
-### Safeguards Enforced
-- Factory scripts and CLI (`bin/factory.mjs`, `installer/*.ps1`) never terminate, reload, or restart Antigravity IDE or parent processes.
-- Any global skill/workflow changes requiring an IDE UI refresh are marked **PENDING MANUAL RESTART**.
+**Verified Conclusion:** Prior Antigravity shutdown was triggered by Antigravity Electron AutoUpdater (`v2.32.2` -> `v2.33.0`, `%APPDATA%\Antigravity\logs\main.log`), not any factory script. A secondary UTF-8 BOM bug in local `ponytail/plugin.json` was resolved. All factory installers, updaters, and skills enforce zero IDE process termination (`taskkill`/`Stop-Process` blocked by policy and `skills-engine.mjs`).
 
 ---
 
-## 2. Implementation Phases & Verification Status
+## 2. Implementation Decisions & Phase Log
 
-- [x] **Phase 1: Audit, Shutdown Investigation & Foundation Repair**
-  - Audited starter repo (`bin/factory.mjs`, `tests/factory.test.mjs`, `installer/*.ps1`, `.agents/skills/*`).
-  - Removed UTF-8 BOM from `C:\Users\CP\.gemini\config\plugins\ponytail\plugin.json`.
-  - Verified `pstack-ports/agy-pstack` (`0.15.43`, MIT) and `DietrichGebert/ponytail` (`4.9.0`, MIT); installed missing `control-cli`, `control-ui`, and `deslop` skills globally.
-- [x] **Phase 2: SQLite State Store, Security Scanner & Universal Project Adapters** (`src/db.mjs`, `src/security.mjs`, `src/adapters.mjs`)
-  - Implemented `node:sqlite` WAL database (`factory.db`) with 11 tables.
-  - Fixed Node 24 `DEP0190` warning via `safeSpawn()`, added secret content scanning, log redaction, path traversal jailing, and policy enforcement.
-  - Added 13+ project stack adapters with runtime detection.
-- [x] **Phase 3: Multi-Agent Orchestrator, 14 Agent Roles, DAG Scheduler & Release Gates** (`src/agents.mjs`, `src/orchestrator.mjs`, `src/gates.mjs`)
-  - Implemented 14 executable agent roles, 13-stage pipeline, dependency DAG scheduler, parallel execution, retries, cancellation, resume, worktree integration, and release candidate gating (`PASS` / `FAIL` / `NOT VERIFIED`).
-- [x] **Phase 4: Upgraded CLI & SQLite-Backed Control Dashboard** (`bin/factory.mjs`, `src/dashboard.mjs`)
-  - Added `plan`, `run`, `status`, `integrate`, `review`, `fix`, `release`, `resume`, `cancel`, `logs`, `agents` while preserving all v0.1 exports.
-  - Built loopback-only, read-only SQLite Control Room UI + `/api/overview`, `/api/projects`, `/api/health`.
-- [x] **Phase 5: Antigravity Native Skills, Slash Workflows, Rules & Installer**
-  - Created and globally installed 11 `factory-*` skills (`C:\Users\CP\.gemini\config\skills\`), 11 slash workflows (`C:\Users\CP\.gemini\workflows\` & `C:\Users\CP\.agents\workflows\`), and `factory-quality.md` (`C:\Users\CP\.gemini\config\rules\`).
-- [x] **Phase 6: Tests, Documentation & Real Disposable E2E Validation**
-  - `npm test`: `17/17` passing (`tests/factory.test.mjs` + `tests/orchestrator.test.mjs`).
-  - Validated all 10 E2E steps on disposable `$env:TEMP\factory-demo-notes-app` (Notes REST API in isolated Git worktree, verification, merge, review, release candidate, deliberate lint failure blocking release, interrupted `qa` task recovery via `resume`, and live dashboard HTTP/JSON verification).
-  - Authored `README.md`, `FACTORY_MEMORY.md`, `FACTORY_ARCHITECTURE.md`, `SKILLS_REGISTRY.md`, `QUALITY_GATES.md`, `SECURITY.md`, `ENVIRONMENT.md`, `CHANGELOG.md`.
-- [x] **Phase 7: Dual-IDE Support (Cursor IDE + Antigravity IDE)**
-  - Added `.cursor/rules/factory-quality.mdc` (`alwaysApply: true`) and made all 11 `factory-*` skills IDE-neutral using `factory <cmd>` CLI + fallback.
-  - Added `cursor-ide` provider detection in `src/agents.mjs` and Cursor skill/rule checks in `bin/factory.mjs` `doctor()`.
-  - Updated `factory init .` (`opts.full`) and `installer/Install-Factory.ps1` to scaffold/install `.cursor/rules` and `.cursor/skills` (`~/.cursor/skills`, `~/.cursor/rules/factory-quality.mdc`, `~/.cursor/rules/pstack-models.mdc`) and mirror local `pstack`/`ponytail` skills to `~/.cursor/skills` without touching `~/.cursor/skills-cursor/`.
-- [x] **Phase 8: Auto-Install Missing pstack & Ponytail From Upstream Repos**
-  - Updated `installer/Install-Factory.ps1`, `installer/Setup.ps1`, and `bin/factory.mjs` (`ensureExternalSkills` + `copySkillDirs`) to automatically clone and install missing `pstack` (`https://github.com/backnotprop/pstack.git`) and `Ponytail` (`https://github.com/DietrichGebert/ponytail.git`) without overwriting existing skills or copying loose `plugin.json` files.
+- [x] **v0.2.0 Baseline:** SQLite `node:sqlite` WAL store, secret scanning/redaction, `safeSpawn`, path jailing, stack adapters, 14-role DAG orchestrator, read-only dashboard, Antigravity + Cursor dual setup, and automatic pstack/Ponytail installation (`20/20` baseline tests).
+- [x] **v1.0 Phase 1 (`ee548f4`):** Added versioned transactional SQLite migrations (`src/migrations.mjs` v1 -> v2, 8 new tables), `src/db.mjs` V1.0 CRUD + `FACTORY_GLOBAL_HOME` isolation, expanded adapters (Prisma, IIS/ASP, Unity, Unreal, Godot, IoT, Biometrics), and 9 reusable project profiles (`src/profiles.mjs`).
+- [x] **v1.0 Phase 2 (`eec18e9`):** Built 60 specialist registry (`src/agent-registry.mjs`, 9 categories, 13 attributes, 14-role bidirectional compatibility), generated 180 native Antigravity/Cursor/canonical `.md` adapters, and implemented smart complexity & domain-filtering router (`src/router.mjs`).
+- [x] **v1.0 Phase 3 (`8ef3aa5`):** Built 3-level memory engine (`src/memory.mjs`), PII/secret/biometric guards (`detectSensitiveMemoryContent`), failed-task & unverified-assertion blocks, candidate approval gates, conflict overrides, consolidation, AES-256-GCM export/import, and workflow effectiveness reflection (`src/improvement.mjs`). Verified mandatory Project A -> B -> C isolation scenario.
+- [x] **v1.0 Phases 4–5 (`dd2d6dc`):** Implemented Context Budget Engine (`src/context-engine.mjs`) with git/config cache invalidation and real byte benchmark harness (`154,737` baseline B -> `3,511` B `FAST` / `25,449` B `DEEP`), plus Skill Discovery, Ranking, Security Audit, and `.factory/skills-lock.json` engine (`src/skills-engine.mjs`, `src/skill-allowlist.json`).
+- [x] **v1.0 Phases 6–7 (`4f22d5b`):** Removed hardcoded `C:/Users/CP/` paths from `.agents/workflows/` and `.agents/rules/`, added 5 conditional Antigravity/Cursor rules, authored 10 `eng-*` skills with lazy `references/playbook.md` playbooks, added 4 slash workflows/skills (`factory-{update,learn,skills,deploy}`), and built `src/deployment-advisor.mjs`.
+- [x] **v1.0 Phase 8 (`896040d`):** Built `src/updater.mjs` (`updateFactory`, `syncProject`, manifest SHA-256 tracking, dirty Git tree protection, crash-recovery journal, backup + SQLite DB snapshot, auto & manual rollback). Verified mandatory upgrade & simulated rollback scenario.
+- [x] **v1.0 Phases 9–10 (`2155467`):** Wired all V1.0 CLI commands (`bin/factory.mjs`), extended dashboard APIs (`/api/{agents,skills,memory,updates,metrics}`) & HTML views, added `installer/install.sh` (Ubuntu/Linux) alongside `Install-Factory.ps1` / `Setup.ps1` `-Offline` & backup support, updated `.github/workflows/factory-tests.yml`, and verified `39/39` tests + Windows sandbox installer smoke checks + `bash -n`.
 
-## 3. Remaining Gaps / Known Limitations
+---
 
-- External CLI providers (`claude`, `codex`, `gemini` CLI) are installed on PATH (`available: true`), but env API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`) are not set (`authenticated: false` in `doctor`), and headless external CLI dispatch is not yet wired (implementation tasks pause as `awaiting_agent` for Antigravity IDE `/factory-build` or explicit `.factory/workers/*.mjs` handlers).
-- Newly installed global skills/workflows (`factory-init`, `factory-status`, `factory-test`, `factory-review`, `factory-fix`, `control-cli`, `control-ui`, `deslop`) are **PENDING MANUAL RESTART** for Antigravity IDE's UI skill dropdown if not dynamically reloaded.
-- Production deployment, GitHub Actions dispatch, and signed mobile APK builds remain intentionally manual (`automatic_deployment: false`).
+## 3. Known Limitations & `NOT VERIFIED` Items
+
+- Global host directory `~/.gemini/factory-home` remains at prior installation until owner approves running `Setup.ps1 -Scope Global -UpdateFactory` (`doctor` measured `cursor_agents_count: 2` on host vs `60` validated inside repo & sandbox).
+- Live Antigravity/Cursor UI dropdown visibility for newly added skills/agents requires manual IDE window reload after host installation (`PENDING MANUAL RESTART`).
+- Remote GitHub Actions `ubuntu-latest` / `windows-latest` CI workflow execution for `feat/myfactory-v1.0` awaits owner approval to push.
+- Online `npx skills add` live fetch & live LLM API token telemetry (`input_tokens`/`output_tokens`) remain `NOT VERIFIED` / `unavailable` in local offline execution.

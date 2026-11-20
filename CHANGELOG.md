@@ -1,20 +1,20 @@
 # Changelog
 
+## v1.0.0 (2026-11-20)
+
+- **Core & Migrations:** Versioned transactional SQLite migrations (`src/migrations.mjs` v1 -> v2, preserving v0.2.0 data), 8 new tables, `FACTORY_GLOBAL_HOME` isolation, 9 engineering project profiles (`src/profiles.mjs`), and stack adapters for Prisma, Windows IIS/ASP, Unity, Unreal, Godot, IoT/telematics, and Biometrics.
+- **60 Specialist Agents & Smart Router:** Categorized canonical library (`.agent/agents/`), 60 Antigravity adapters (`.agents/agents/`), 60 Cursor subagents (`.cursor/agents/`), 14 legacy role bidirectional mapping, and domain-bounded complexity routing (`FAST`/`STANDARD`/`DEEP`/`RELEASE`).
+- **3-Level Memory & Learning Engine:** Task, Project, and Global SQLite memory (`src/memory.mjs`), candidate approval workflow, explicit vs inferred preference distinction, project override resolution, PII/secret/biometric guards, consolidation, AES-256-GCM encrypted export/import, and workflow effectiveness proposals (`src/improvement.mjs`).
+- **Context Optimization:** Progressive 10-step context loader (`src/context-engine.mjs`), Git/config-invalidated summary cache, and measured byte benchmark (`context benchmark`).
+- **Skill Discovery & Security:** Search, stack-matched recommendations, pre-install `SKILL.md` + script security scanner (`src/skills-engine.mjs`), reviewed allowlist (`src/skill-allowlist.json`), and SHA-256 `.factory/skills-lock.json`.
+- **Engineering Standards & Conditional Rules:** 10 progressive `eng-*` skills with lazy `references/playbook.md`, 5 conditional Antigravity/Cursor rules, portable workflows/rules without hardcoded user paths, and 4 new slash commands (`factory-update`, `factory-learn`, `factory-skills`, `factory-deploy`).
+- **Deployment Advisor & Safe Updater:** Platform evaluation across 11 targets (`src/deployment-advisor.mjs`), manifest-tracked self-update/sync with dirty-Git guard, backups, crash recovery, and automatic rollback (`src/updater.mjs`).
+- **Dashboard, CLI & Linux Support:** Extended read-only dashboard JSON APIs & views (`src/dashboard.mjs`), complete CLI command suite (`bin/factory.mjs`), `-Offline` + backup upgrades in Windows installers, new `installer/install.sh` for Ubuntu/Linux, and 39 automated tests.
+
 ## v0.2.0 (2026-11-19)
 
-- Added SQLite persistence engine (`src/db.mjs`) via Node.js built-in `node:sqlite`.
-- Added security & execution boundary module (`src/security.mjs`) with secret content scanning, log redaction, path traversal jailing, policy enforcement, and DEP0190-safe Windows `safeSpawn`.
-- Added universal project adapter system (`src/adapters.mjs`) supporting Next.js, React, NestJS, Node.js, Python, .NET, Flutter, Expo/React Native, PostgreSQL, SQL Server, Docker, Desktop, AI/ML, and Monorepos.
-- Added 14 executable agent roles and provider compatibility detection (`src/agents.mjs`).
-- Added dependency-aware DAG orchestrator (`src/orchestrator.mjs`) with bounded parallel execution, retries, cancellation, resume, isolated worktree integration, and release candidate gating.
-- Upgraded quality gates (`src/gates.mjs`) with measurable metrics and explicit `NOT VERIFIED` / `BLOCKED` reporting.
-- Upgraded local read-only Control Dashboard (`src/dashboard.mjs`) with SQLite-backed multi-project views and JSON APIs (`/api/overview`, `/api/projects`, `/api/health`).
-- Added `/factory-init`, `/factory-status`, `/factory-test`, `/factory-review`, `/factory-fix` skills and all 11 Antigravity slash workflows under `.agents/workflows/`.
-- Added native Cursor IDE support (`.cursor/rules/factory-quality.mdc`, `~/.cursor/skills`, `~/.cursor/rules/pstack-models.mdc`, `cursor-ide` provider, `doctor` Cursor checks, and full `.agent`/`.agents`/`.cursor`/`.factory` scaffolding in `factory init .`).
-- Added automatic missing-skill installation for `pstack` (`https://github.com/backnotprop/pstack.git`) and `Ponytail` (`https://github.com/DietrichGebert/ponytail.git`) in `Setup.ps1`, `Install-Factory.ps1`, and CLI `factory init .` (plus Cursor `agents/` copy and `-SkipExternalSkills` / `--skip-external` offline flags).
-- Repaired UTF-8 BOM in installed `ponytail/plugin.json` and installed missing `agy-pstack` skills (`control-cli`, `control-ui`, `deslop`).
+- Added SQLite persistence (`src/db.mjs`), secret scanning/path jailing (`src/security.mjs`), project adapters, 14-agent DAG orchestrator, loopback Control Room dashboard, Cursor IDE integration, and automatic missing pstack/Ponytail cloning.
 
 ## v0.1.0
 
 - Initial starter kit with JSON task tracker, Git worktrees, basic check detection, Windows installer, and 6 factory skills.
-

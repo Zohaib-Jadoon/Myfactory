@@ -1,54 +1,33 @@
-# Factory Architecture
+# Factory Architecture (`v1.0.0`)
 
-## System Overview
+Myfactory is a modular, zero-dependency Node.js (`>=22.5`) software engineering factory using built-in `node:sqlite` (WAL mode), isolated Git worktrees, and progressive Antigravity + Cursor IDE integration.
 
-The Universal AI Software Factory separates **orchestration state** (SQLite + per-project `.factory/`) from **code execution boundaries** (isolated Git worktrees) and **IDE interaction** (Antigravity Skills, Workflows, and Rules).
+## System Modules
 
 ```text
-Antigravity IDE (/factory-* workflows, skills, rules, poteto-mode, ponytail)
-        │
-        ▼
-Factory CLI (bin/factory.mjs)
-  ├── SQLite Store (src/db.mjs -> node:sqlite WAL)
-  ├── Project Adapters (src/adapters.mjs)
-  ├── Security & Boundary Guard (src/security.mjs)
-  ├── 14-Agent Execution Engine (src/agents.mjs)
-  ├── DAG Orchestrator & Worktree Manager (src/orchestrator.mjs)
-  ├── Quality Gates & Metrics (src/gates.mjs)
-  └── Control Room Dashboard (src/dashboard.mjs -> 127.0.0.1:4177)
+CLI & Entrypoint (bin/factory.mjs)
+  ├── Core Persistence & Versioned Migrations (src/db.mjs, src/migrations.mjs -> schema v2)
+  ├── Project Stack Adapters & Profiles (src/adapters.mjs, src/profiles.mjs -> Profiles A-H + Desktop)
+  ├── Specialist Registry & Native IDE Adapters (src/agent-registry.mjs -> 60 agents, 9 categories)
+  ├── Smart Agent Router (src/router.mjs -> FAST/STANDARD/DEEP/RELEASE)
+  ├── Security & Boundary Guard (src/security.mjs -> secret/PII/biometric filters, path jail, safeSpawn)
+  ├── 3-Level Memory & Learning Engine (src/memory.mjs, src/improvement.mjs)
+  ├── Context Budget Engine (src/context-engine.mjs -> cache invalidation + byte benchmarks)
+  ├── Skill Discovery & Security Scanner (src/skills-engine.mjs, src/skill-allowlist.json)
+  ├── 14-Role Legacy Execution Engine & DAG Orchestrator (src/agents.mjs, src/orchestrator.mjs)
+  ├── Quality Gates & Release Verifier (src/gates.mjs -> PASS/FAIL/NOT VERIFIED)
+  ├── Deployment Advisor (src/deployment-advisor.mjs)
+  ├── Safe Updater & Project Sync (src/updater.mjs -> manifests, backups, auto-rollback)
+  ├── Read-Only Control Room Dashboard (src/dashboard.mjs -> 127.0.0.1:4177)
+  └── Cross-Platform Installers (installer/Setup.ps1, Install-Factory.ps1, install.sh)
 ```
 
-## 13-Stage Software Delivery Lifecycle
+## SQLite Persistence Schema (`v2`, 19 Application Tables + `schema_migrations`)
 
-1. `requirements` — Product Manager Agent generates `docs/factory/PRD.md`.
-2. `planning` — Factory Director Agent builds dependency DAG.
-3. `architecture` — Architecture & UI/UX Agents write `docs/factory/ARCHITECTURE.md` and `UI_UX_SPEC.md`.
-4. `assignment` — Tasks scheduled to ready queue by priority and dependencies.
-5. `implementation` — `frontend`, `backend`, `database`, `mobile`, `ai_ml` execute in isolated Git worktrees (`factory/<task-id>`) or pause cleanly as `awaiting_agent` for Antigravity IDE coding.
-6. `integration` — Verified, clean worktrees merge via `integrate` (`git merge --no-ff`).
-7. `testing` — QA Agent runs `lint`, `typecheck`, `test`, `build` gates via `safeSpawn`.
-8. `security_review` — Security Agent scans filenames, file contents, and dependency audits.
-9. `quality_review` — Code Review Agent runs `git diff --check` and Ponytail/pstack review.
-10. `release_candidate` — DevOps Agent updates `RUNBOOK.md` and prepares release candidate.
-11. `human_approval` — Explicit `approve` required on clean verified HEAD + unchanged config hash.
-12. `deployment` — Intentionally manual / owner-triggered outside automatic pipeline.
-13. `verification` — Documentation Agent updates `docs/factory/STATUS.md` and release record.
+- **v1 Core (`11`):** `projects`, `pipelines`, `tasks`, `task_history`, `execution_logs`, `gate_runs`, `security_findings`, `review_findings`, `releases`, `approvals`, `agent_runs`.
+- **v2 Additions (`8`):** `memories`, `project_profiles`, `skill_registry`, `routing_decisions`, `context_metrics`, `update_history`, `improvement_proposals`, `deployment_advice`.
 
-## SQLite Persistence Schema (`src/db.mjs`)
+## Parallel Execution & Compatibility Layers
 
-- `projects`: Registered project paths, detected adapters, config snapshot, config SHA-256 hash.
-- `pipelines`: Goal, active stage, lifecycle status.
-- `tasks`: DAG nodes (`depends_on_json`), assigned `agent_role`, `stage`, `status`, `attempts`, `max_retries`, `lease_owner`, `worktree`, `branch`, `last_error`, `verification_json`, `approval_json`.
-- `task_history`: Audit trail of state transitions.
-- `execution_logs`: Redacted operational logs.
-- `gate_runs`: Per-check outcomes (`PASS`/`FAIL`/`NOT VERIFIED`) and measurable pass-rate metrics.
-- `security_findings` & `review_findings`: Open and resolved findings.
-- `releases` & `approvals`: Release candidate history and human sign-off decisions.
-- `agent_runs`: Per-agent invocation records and provider provenance.
-
-## Execution Boundary & Parallelism
-
-- Independent tasks run concurrently up to configured `concurrency` (default 3) only when all `depends_on` tasks are in `completed`, `verified`, or `approved`.
-- Code-modifying tasks use dedicated Git worktrees under `.factory/worktrees/<task-id>` on branch `factory/<task-id>` so parallel agents cannot overwrite each other's working tree.
-- Subprocesses run via `safeSpawn()` in `src/security.mjs` with `assertInsideRoot()` path jailing and `redactSecrets()` scrubbing.
-
+- Legacy 14 roles (`src/agents.mjs`) remain intact and map cleanly to V1.0 specialists via `LEGACY_TO_SPECIALIST_MAP`.
+- Concurrent code-modifying tasks use dedicated worktrees under `.factory/worktrees/<id>` on branch `factory/<id>` and require passing `verify` + clean `HEAD` before `integrate` or `approve`.
