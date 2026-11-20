@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { inspectProjectStack } from './adapters.mjs';
 import { scanSecrets, redactSecrets, safeSpawn } from './security.mjs';
+import { resolveSpecialist } from './agent-registry.mjs';
 
 export const PIPELINE_STAGES = [
   'requirements',
@@ -205,18 +206,21 @@ function tryDependencyAudit(cwd) {
  */
 export async function executeAgentTask({ db, project, task, runGateFn }) {
   const workDir = task.worktree && existsSync(task.worktree) ? task.worktree : project.path;
-  const role = AGENT_ROLES[task.agent_role] || AGENT_ROLES.backend;
+  const specialist = resolveSpecialist(task.specialist_id || task.agent_role);
+  const roleId = AGENT_ROLES[task.agent_role] ? task.agent_role : (specialist?.legacyRole || 'backend');
+  const role = AGENT_ROLES[roleId] || AGENT_ROLES.backend;
+  const activeAgentLabel = specialist ? `${specialist.name} (${specialist.id})` : role.name;
   const runId = db.startAgentRun(project.id, {
     pipelineId: task.pipeline_id,
     taskId: task.id,
-    agentRole: role.id,
+    agentRole: task.specialist_id || role.id,
     provider: 'local-deterministic'
   });
 
-  db.log(project.id, `[${role.name}] Starting task ${task.id}: ${task.title}`, {
+  db.log(project.id, `[${activeAgentLabel}] Starting task ${task.id}: ${task.title}`, {
     pipelineId: task.pipeline_id,
     taskId: task.id,
-    agentRole: role.id
+    agentRole: task.specialist_id || role.id
   });
 
   try {
@@ -365,8 +369,11 @@ export async function executeAgentTask({ db, project, task, runGateFn }) {
       // Implementation roles: director, frontend, backend, database, mobile, ai_ml
       // Check if an explicit trusted local worker script exists in .factory/workers/<task_id>.mjs or <role>.mjs
       const taskWorker = join(project.path, '.factory', 'workers', `${task.id}.mjs`);
+      const specialistWorker = specialist ? join(project.path, '.factory', 'workers', `${specialist.id}.mjs`) : null;
       const roleWorker = join(project.path, '.factory', 'workers', `${role.id}.mjs`);
-      const workerFile = existsSync(taskWorker) ? taskWorker : (existsSync(roleWorker) ? roleWorker : null);
+      const workerFile = existsSync(taskWorker)
+        ? taskWorker
+        : (specialistWorker && existsSync(specialistWorker) ? specialistWorker : (existsSync(roleWorker) ? roleWorker : null));
 
       if (workerFile) {
         const res = safeSpawn(process.execPath, [workerFile, workDir, task.id], { cwd: workDir, timeout: 180000 });
@@ -382,7 +389,7 @@ export async function executeAgentTask({ db, project, task, runGateFn }) {
           `# IDE Task Brief (Antigravity / Cursor): ${task.title}`,
           ``,
           `- **Task ID:** ${task.id}`,
-          `- **Role:** ${role.name}`,
+          `- **Role / Specialist:** ${activeAgentLabel}`,
           `- **Worktree:** ${workDir}`,
           `- **Acceptance Criteria:** ${task.criteria}`,
           ``,
