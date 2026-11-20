@@ -1,0 +1,55 @@
+{
+  "schema": 1,
+  "reviewed_at": "2026-11-20",
+  "allowlisted_skills": [
+    "factory-init",
+    "factory-plan",
+    "factory-build",
+    "factory-status",
+    "factory-test",
+    "factory-review",
+    "factory-fix",
+    "factory-release",
+    "factory-resume",
+    "factory-verify",
+    "factory-security",
+    "factory-update",
+    "factory-learn",
+    "factory-skills",
+    "factory-deploy",
+    "eng-architecture",
+    "eng-frontend",
+    "eng-backend",
+    "eng-databases",
+    "eng-mobile",
+    "eng-desktop",
+    "eng-ai-biometrics",
+    "eng-games",
+    "eng-quality",
+    "eng-deployment",
+    "poteto-mode",
+    "ponytail"
+  ],
+  "vetted_repositories": {
+    "backnotprop/pstack": {
+      "url": "https://github.com/backnotprop/pstack.git",
+      "license": "MIT",
+      "purpose": "Engineering rigor, root-cause debugging, verification discipline"
+    },
+    "DietrichGebert/ponytail": {
+      "url": "https://github.com/DietrichGebert/ponytail.git",
+      "license": "MIT",
+      "purpose": "Minimal complete diffs, YAGNI, stdlib-first discipline"
+    },
+    "vercel-labs/agent-skills": {
+      "url": "https://github.com/vercel-labs/agent-skills.git",
+      "license": "Apache-2.0 / MIT",
+      "purpose": "Official Vercel / Next.js / React engineering skills"
+    },
+    "anthropics/skills": {
+      "url": "https://github.com/anthropics/skills.git",
+      "license": "Apache-2.0",
+      "purpose": "Official Anthropic agent skills repository"
+    }
+  }
+}
