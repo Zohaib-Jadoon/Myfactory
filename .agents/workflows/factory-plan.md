@@ -1,4 +1,4 @@
----
+﻿---
 description: Analyze requirements and generate a 14-agent DAG implementation plan with measurable acceptance criteria.
 ---
 
@@ -6,7 +6,7 @@ description: Analyze requirements and generate a 14-agent DAG implementation pla
 
 $ARGUMENTS
 
-Use `factory-plan` (`C:/Users/CP/.gemini/config/skills/factory-plan/SKILL.md`), `poteto-mode` (`architect`), and `ponytail`.
+Use `factory-plan`, `poteto-mode` (`architect`), and `ponytail`.
 
 1. Ensure `.factory/config.json` exists (`factory init "."` if needed).
 2. Run `node "%USERPROFILE%\.gemini\factory-home\bin\factory.mjs" plan "." --goal "$ARGUMENTS"`.

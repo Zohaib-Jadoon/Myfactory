@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openFactoryDb } from '../src/db.mjs';
 import { buildTaskContext, getCachedProjectSummary, runContextBenchmark } from '../src/context-engine.mjs';
+import { adviseDeployment, generateDeploymentPlan } from '../src/deployment-advisor.mjs';
+import { openGlobalMemoryDb, recordMemory } from '../src/memory.mjs';
 
 function makeGitProject(t) {
   const dir = mkdtempSync(join(tmpdir(), 'factory-ctx-test-'));
@@ -57,5 +59,50 @@ test('progressive context loader stays below naive baseline, avoids fan-out on F
     assert.equal(db.listContextMetrics().length, 5);
   } finally {
     db.close();
+  }
+});
+
+test('deployment advisor respects existing hosting configs, avoids Kubernetes bloat, and applies learned deployment lessons', t => {
+  const root = mkdtempSync(join(tmpdir(), 'factory-dep-test-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const projWeb = join(root, 'existing-render-web');
+  const projIis = join(root, 'iis-legacy');
+  mkdirSync(projWeb, { recursive: true });
+  mkdirSync(projIis, { recursive: true });
+
+  writeFileSync(join(projWeb, 'package.json'), JSON.stringify({ dependencies: { next: '15.0.0', react: '19.0.0' } }));
+  writeFileSync(join(projWeb, 'render.yaml'), 'services:\n  - type: web\n    name: app\n');
+  writeFileSync(join(projIis, 'web.config'), '<configuration><system.webServer /></configuration>\n');
+
+  const dbWeb = openFactoryDb(join(projWeb, '.factory', 'factory.db'));
+  const dbIis = openFactoryDb(join(projIis, '.factory', 'factory.db'));
+  const globalDb = openGlobalMemoryDb(join(root, 'global-home'));
+
+  try {
+    dbWeb.upsertProject({ name: 'web-render', path: projWeb, adapterIds: ['nextjs'], config: {}, configHash: 'w1' });
+    const webAdvice = adviseDeployment({ projectPath: projWeb, projectDb: dbWeb, globalDb });
+    assert.equal(webAdvice.recommended_platform, 'render');
+    assert.equal(webAdvice.options.some(o => o.platform === 'kubernetes'), false);
+
+    recordMemory(globalDb, {
+      scope: 'global',
+      type: 'explicit_preference',
+      source_type: 'explicit_user',
+      category: 'deployment',
+      profile_scope: 'legacy',
+      statement: 'Always back up web.config and set IIS application pool to No Managed Code before ARR proxy staging'
+    });
+
+    const pIis = dbIis.upsertProject({ name: 'iis-app', path: projIis, adapterIds: ['iis_asp'], config: {}, configHash: 'i1' });
+    dbIis.setProjectProfile(pIis.id, { profileId: 'legacy', detectedStack: ['iis_asp'] });
+    const plan = generateDeploymentPlan({ projectPath: projIis, projectDb: dbIis, globalDb });
+    assert.equal(plan.recommended_platform, 'windows-iis');
+    assert.ok(plan.relevant_lessons.some(l => l.statement.includes('No Managed Code')));
+    assert.ok(plan.plan_markdown.includes('No Managed Code'));
+    assert.ok(plan.plan_markdown.includes('never stop/recycle unrelated IIS pools'));
+  } finally {
+    dbWeb.close();
+    dbIis.close();
+    globalDb.close();
   }
 });

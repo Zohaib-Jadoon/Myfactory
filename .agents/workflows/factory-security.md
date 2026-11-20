@@ -1,4 +1,4 @@
----
+﻿---
 description: Run threat modeling, secret scanning, and security boundary verification.
 ---
 
@@ -6,4 +6,4 @@ description: Run threat modeling, secret scanning, and security boundary verific
 
 $ARGUMENTS
 
-Use `factory-security` (`C:/Users/CP/.gemini/config/skills/factory-security/SKILL.md`) and run `node "%USERPROFILE%\.gemini\factory-home\bin\factory.mjs" review "."`.
+Use `factory-security` and run `node "%USERPROFILE%\.gemini\factory-home\bin\factory.mjs" review "."`.

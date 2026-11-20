@@ -1,0 +1,11 @@
+---
+description: "PostgreSQL, SQL Server T-SQL, Prisma, and SQLite database migration safety and rollback rules"
+globs: "**/*.sql,**/prisma/**/*,**/*migration*/**/*"
+alwaysApply: false
+---
+# Database Migration Safety Rules (Conditional)
+
+- Apply `eng-databases` before editing schemas or migrations.
+- Preserve production data: never drop columns/tables or rewrite historical migrations without explicit human approval and verified backup/rollback scripts.
+- Wrap schema migrations in explicit transactions where supported, add indexes cleanly, and verify foreign key / uniqueness constraints with isolated tests.
+- Keep live DB connection strings out of source and factory memory; document variable names only in `.env.example`.

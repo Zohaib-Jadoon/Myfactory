@@ -1,4 +1,4 @@
----
+﻿---
 description: Execute the approved factory plan using isolated worktrees, pstack engineering rigor, and Ponytail simplicity.
 ---
 
@@ -6,7 +6,7 @@ description: Execute the approved factory plan using isolated worktrees, pstack 
 
 $ARGUMENTS
 
-Use `factory-build` (`C:/Users/CP/.gemini/config/skills/factory-build/SKILL.md`), `poteto-mode`, and `ponytail`.
+Use `factory-build`, `poteto-mode`, and `ponytail`.
 
 1. Run `node "%USERPROFILE%\.gemini\factory-home\bin\factory.mjs" run "."`.
 2. For `awaiting_agent` tasks, create isolated worktrees (`factory worktree "." --id <id>`), implement minimal complete changes with tests, verify (`factory verify "." --id <id>`), and integrate (`factory integrate "." --id <id>`).

@@ -1,19 +1,18 @@
 ---
-description: Universal Software Factory quality, pstack (/poteto-mode), Ponytail (/ponytail full), and release integrity rules
+description: Universal Software Factory core quality, context-sensitive pstack/Ponytail discipline, and release gates
 globs:
 alwaysApply: true
 ---
 
-# Universal Software Factory — Global Quality, pstack & Ponytail Policy
+# Universal Software Factory — Global Policy (Cursor IDE)
 
-Applies automatically across projects in Cursor IDE.
-
-## 1. Automatic Engineering Modes
-- **pstack (`/poteto-mode`):** Understand full call paths and data shapes first, isolate parallel changes in Git worktrees, fix root causes, prove changes against real artifacts, and keep prose/comments concise.
-- **Ponytail (`/ponytail full`):** Climb the simplicity ladder (YAGNI, reuse existing helpers, stdlib/native first, minimal dependencies, smallest complete diff) without sacrificing validation, security, accessibility, or tests.
-
-## 2. Factory Workflow & Release Integrity
-- Use `/factory-init`, `/factory-plan`, `/factory-build`, `/factory-status`, `/factory-test`, `/factory-review`, `/factory-fix`, `/factory-release`, and `/factory-resume`, backed by the `factory` CLI (`factory init .`, `factory plan .`, `factory run .`, `factory verify .`, `factory review .`, `factory release .`, `factory serve .`).
-- No false success claims: a green build is not proof of live production correctness. Mark unexecuted checks or missing runtimes as **NOT VERIFIED** or **BLOCKED**, never PASS.
-- Never push, merge without verification, deploy, overwrite databases, run production migrations, or build signed APKs without explicit human approval. Preserve a rollback path.
-
+1. Preserve existing code, schemas, rules, skills, memories, and data. Inspect before editing.
+2. Activate only relevant specialists and skills; load detailed references on demand to protect context budget.
+3. Context-sensitive discipline:
+   - `FAST`: `pstack` root-cause clarity + `Ponytail lite` minimal edit.
+   - `STANDARD`: `pstack` data-shape-first + `Ponytail full` ladder (YAGNI, reuse existing helpers, stdlib-first).
+   - `DEEP` / `RELEASE`: full `pstack` rigor + `Ponytail full` + independent review.
+4. Track tasks and gates via `factory` CLI (`factory init .`, `factory plan .`, `factory verify .`, `factory review .`, `factory release .`).
+5. Never fabricate test passes; mark missing runtimes or skipped checks `NOT VERIFIED` or `BLOCKED`.
+6. Protect secrets, PII, and biometric records; never store them in source, logs, or memory.
+7. Never close or restart Cursor or Antigravity IDE. Never push, deploy, run destructive DB migrations, or sign/publish apps without explicit human approval.

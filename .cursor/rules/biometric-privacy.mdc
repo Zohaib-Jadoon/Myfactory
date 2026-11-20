@@ -1,0 +1,11 @@
+---
+description: "Activate for biometric face verification, liveness detection, anti-spoofing, external fingerprint readers, or enrollment workflows"
+globs:
+alwaysApply: false
+---
+# Biometric & Privacy Engineering Rules (Conditional)
+
+- Apply `eng-ai-biometrics` and route to `biometric-ai-engineer` + `security-reviewer`.
+- Strictly distinguish OS-level device unlock (`BiometricPrompt` / `FaceID` / `LocalAuthentication`) from external fingerprint readers or server-side biometric verification.
+- Evaluate models reproducibly with FAR, FRR, and liveness anti-spoofing cases; separate synthetic test fixtures from real camera/hardware tests.
+- Never store raw biometric embeddings, facial images, fingerprint templates, or user PII in factory logs, artifacts, or shared memory.

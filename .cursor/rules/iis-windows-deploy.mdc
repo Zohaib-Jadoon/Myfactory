@@ -1,0 +1,10 @@
+---
+description: "Windows IIS, Classic ASP, SQL Server, and PowerShell deployment safety rules"
+globs: "**/web.config,**/*.asp,**/*.ps1,**/*.sqlproj"
+alwaysApply: false
+---
+# Windows IIS & Legacy System Rules (Conditional)
+
+- Apply `eng-deployment` and route IIS/ASP tasks to `windows-iis-engineer` / `legacy-asp-modernizer`.
+- Preserve existing `web.config` bindings, Classic ASP request/session behavior, and live SQL Server schemas.
+- Produce non-destructive PowerShell deployment & rollback scripts requiring explicit human approval; never restart IDE processes or stop unrelated IIS pools unexpectedly.

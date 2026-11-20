@@ -1,4 +1,4 @@
----
+﻿---
 description: Prepare and validate an auditable release candidate requiring explicit human approval.
 ---
 
@@ -6,7 +6,7 @@ description: Prepare and validate an auditable release candidate requiring expli
 
 $ARGUMENTS
 
-Use `factory-release` (`C:/Users/CP/.gemini/config/skills/factory-release/SKILL.md`).
+Use `factory-release`.
 
 1. Run `node "%USERPROFILE%\.gemini\factory-home\bin\factory.mjs" release "." --version "${ARGUMENTS:-0.1.0-rc.1}"`.
 2. If blocked, report exact failed/unverified checks. If verified, request explicit human `approve` command execution; never auto-deploy.
