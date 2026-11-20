@@ -1,0 +1,19 @@
+---
+description: Universal Software Factory quality, pstack (/poteto-mode), Ponytail (/ponytail full), and release integrity rules
+globs:
+alwaysApply: true
+---
+
+# Universal Software Factory — Global Quality, pstack & Ponytail Policy
+
+Applies automatically across projects in Cursor IDE.
+
+## 1. Automatic Engineering Modes
+- **pstack (`/poteto-mode`):** Understand full call paths and data shapes first, isolate parallel changes in Git worktrees, fix root causes, prove changes against real artifacts, and keep prose/comments concise.
+- **Ponytail (`/ponytail full`):** Climb the simplicity ladder (YAGNI, reuse existing helpers, stdlib/native first, minimal dependencies, smallest complete diff) without sacrificing validation, security, accessibility, or tests.
+
+## 2. Factory Workflow & Release Integrity
+- Use `/factory-init`, `/factory-plan`, `/factory-build`, `/factory-status`, `/factory-test`, `/factory-review`, `/factory-fix`, `/factory-release`, and `/factory-resume`, backed by the `factory` CLI (`factory init .`, `factory plan .`, `factory run .`, `factory verify .`, `factory review .`, `factory release .`, `factory serve .`).
+- No false success claims: a green build is not proof of live production correctness. Mark unexecuted checks or missing runtimes as **NOT VERIFIED** or **BLOCKED**, never PASS.
+- Never push, merge without verification, deploy, overwrite databases, run production migrations, or build signed APKs without explicit human approval. Preserve a rollback path.
+

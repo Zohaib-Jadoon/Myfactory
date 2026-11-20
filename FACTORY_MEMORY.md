@@ -46,6 +46,10 @@ Durable operational log and state for the Universal AI Software Factory (Google 
   - `npm test`: `17/17` passing (`tests/factory.test.mjs` + `tests/orchestrator.test.mjs`).
   - Validated all 10 E2E steps on disposable `$env:TEMP\factory-demo-notes-app` (Notes REST API in isolated Git worktree, verification, merge, review, release candidate, deliberate lint failure blocking release, interrupted `qa` task recovery via `resume`, and live dashboard HTTP/JSON verification).
   - Authored `README.md`, `FACTORY_MEMORY.md`, `FACTORY_ARCHITECTURE.md`, `SKILLS_REGISTRY.md`, `QUALITY_GATES.md`, `SECURITY.md`, `ENVIRONMENT.md`, `CHANGELOG.md`.
+- [x] **Phase 7: Dual-IDE Support (Cursor IDE + Antigravity IDE)**
+  - Added `.cursor/rules/factory-quality.mdc` (`alwaysApply: true`) and made all 11 `factory-*` skills IDE-neutral using `factory <cmd>` CLI + fallback.
+  - Added `cursor-ide` provider detection in `src/agents.mjs` and Cursor skill/rule checks in `bin/factory.mjs` `doctor()`.
+  - Updated `factory init .` (`opts.full`) and `installer/Install-Factory.ps1` to scaffold/install `.cursor/rules` and `.cursor/skills` (`~/.cursor/skills`, `~/.cursor/rules/factory-quality.mdc`, `~/.cursor/rules/pstack-models.mdc`) and mirror local `pstack`/`ponytail` skills to `~/.cursor/skills` without touching `~/.cursor/skills-cursor/`.
 
 ## 3. Remaining Gaps / Known Limitations
 

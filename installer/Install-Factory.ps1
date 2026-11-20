@@ -1,5 +1,5 @@
-﻿# Windows 11 / PowerShell 5.1+ installer. No elevated privileges needed.
-# Never closes, restarts, or modifies Antigravity IDE executables.
+# Windows 11 / PowerShell 5.1+ installer. No elevated privileges needed.
+# Never closes, restarts, or modifies Antigravity IDE or Cursor IDE executables.
 [CmdletBinding()]
 param(
     [ValidateSet('Global','Workspace','Both')][string]$Scope='Global',
@@ -60,9 +60,45 @@ if ($Scope -in @('Global','Both')) {
     foreach ($wf in $gWorkflows) { Copy-Tree (Join-Path $source '.agents\workflows') $wf ([bool]$UpdateFactory) }
     $externalTargets += $gSkills
 
+    # Cursor global skills & rules (~/.cursor/skills and ~/.cursor/rules; never touch ~/.cursor/skills-cursor)
+    $cSkills=Join-Path $HOME '.cursor\skills'
+    $cRules=Join-Path $HOME '.cursor\rules'
+    Copy-Tree (Join-Path $source '.agents\skills') $cSkills ([bool]$UpdateFactory)
+    Copy-Tree (Join-Path $source '.cursor\rules') $cRules ([bool]$UpdateFactory)
+    $externalTargets += $cSkills
+
+    $cursorModels = Join-Path $cRules 'pstack-models.mdc'
+    if (-not (Test-Path $cursorModels)) {
+        New-Item -ItemType Directory -Force -Path $cRules | Out-Null
+        [IO.File]::WriteAllText($cursorModels, "---`ndescription: pstack per-role model choices (overrides skill defaults)`nalwaysApply: true`n---`n# pstack model configuration`n# defaults: 2`n# budget: large (xhigh)`nfeature, refactoring: inherit-parent`nbug-fix: inherit-parent`nperf-issue: inherit-parent`nhillclimb: inherit-parent`njudgment and prose: inherit-parent`nhardest tasks: inherit-parent`nreflect tooling: inherit-parent`nreflect judgment, divergent, synthesizer: inherit-parent`narena runners: inherit-parent`narena cross-judge pool: inherit-parent`nswarm workers: inherit-parent`narchitect runners: inherit-parent`ninterrogate reviewers: inherit-parent`n")
+        Write-Host "Installed: $cursorModels"
+    }
+
+    # Mirror existing local pstack and Ponytail skills from Antigravity global skills into Cursor ~/.cursor/skills if missing
+    if (Test-Path $gSkills) {
+        $mirrorList = @(
+            'architect','arena','automate-me','benchmark-checklist','blast-radius','bro',
+            'control-cli','control-ui','correct','create-formal-verification-skill',
+            'create-verification-skill','deslop','figure-it-out','how','in-your-own-words',
+            'interrogate','ketchup','ketchup-video','maintain-formal-verification-skill',
+            'maintain-verification-skill','make-bot-ui','no-comments','poteto-help',
+            'poteto-mode','recall','reflect','setup-pstack','sharpen','show-me-your-work',
+            'statechart','swarm','tdd','teach','technical-writing',
+            'typescript-best-practices','unslop','why',
+            'ponytail','ponytail-audit','ponytail-debt','ponytail-gain','ponytail-help','ponytail-review'
+        )
+        Get-ChildItem -LiteralPath $gSkills -Directory -Filter 'principle-*' | ForEach-Object { $mirrorList += $_.Name }
+        foreach ($skillName in ($mirrorList | Select-Object -Unique)) {
+            $srcSkill = Join-Path $gSkills $skillName
+            if (Test-Path (Join-Path $srcSkill 'SKILL.md')) {
+                Copy-Tree $srcSkill (Join-Path $cSkills $skillName) $false
+            }
+        }
+    }
+
     $factoryHome = Join-Path $HOME '.gemini\factory-home'
     New-Item -ItemType Directory -Force -Path $factoryHome | Out-Null
-    foreach ($dirName in @('bin','src','.agents','.agent')) {
+    foreach ($dirName in @('bin','src','.agents','.agent','.cursor')) {
         $srcDir = Join-Path $source $dirName
         $dstDir = Join-Path $factoryHome $dirName
         if (Test-Path $dstDir) { Remove-Item -LiteralPath $dstDir -Recurse -Force }
@@ -106,7 +142,10 @@ $marker
 if ($Scope -in @('Workspace','Both')) {
     Copy-Tree (Join-Path $source '.agent') (Join-Path $ProjectPath '.agent') $false
     Copy-Tree (Join-Path $source '.agents') (Join-Path $ProjectPath '.agents') ([bool]$UpdateFactory)
+    Copy-Tree (Join-Path $source '.cursor\rules') (Join-Path $ProjectPath '.cursor\rules') ([bool]$UpdateFactory)
+    Copy-Tree (Join-Path $source '.agents\skills') (Join-Path $ProjectPath '.cursor\skills') ([bool]$UpdateFactory)
     $externalTargets += (Join-Path $ProjectPath '.agents\skills')
+    $externalTargets += (Join-Path $ProjectPath '.cursor\skills')
     if (Get-Command node -ErrorAction SilentlyContinue) {
         & node (Join-Path $source 'bin\factory.mjs') init $ProjectPath | Out-Null
         Write-Host "Initialized .factory in $ProjectPath"
@@ -116,4 +155,4 @@ if ($Scope -in @('Workspace','Both')) {
 if($InstallPstack){Add-External 'https://github.com/pstack-ports/agy-pstack.git' 'pstack (community Antigravity port)' $externalTargets}
 if($InstallPonytail){Add-External 'https://github.com/DietrichGebert/ponytail.git' 'Ponytail' $externalTargets}
 Write-Host "Installation complete. Scope: $Scope" -ForegroundColor Green
-Write-Host 'Antigravity IDE remains open. If newly added UI slash commands are not visible yet, mark PENDING MANUAL RESTART.'
+Write-Host 'Antigravity IDE and Cursor IDE remain open. If newly added UI slash commands are not visible yet, mark PENDING MANUAL RESTART.'

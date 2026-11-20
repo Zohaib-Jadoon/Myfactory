@@ -158,6 +158,8 @@ export function init(p, opts = {}) {
   if (opts.full) {
     copyMissingTree(join(ROOT, '.agent'), join(p, '.agent'), scaffolded);
     copyMissingTree(join(ROOT, '.agents'), join(p, '.agents'), scaffolded);
+    copyMissingTree(join(ROOT, '.cursor', 'rules'), join(p, '.cursor', 'rules'), scaffolded);
+    copyMissingTree(join(ROOT, '.agents', 'skills'), join(p, '.cursor', 'skills'), scaffolded);
   }
 
   const config = readJson(conf);
@@ -198,7 +200,7 @@ export function create(p, title, criteria = '', opts = {}) {
     history: [{ at: stamp(), event: 'created' }]
   };
   writeTask(p, t);
-  const prompt = `# Task: ${t.title}\n\nTask ID: ${t.id}\nProject: ${p}\nAgent Role: ${t.agent_role}\n\n## Acceptance criteria\n${t.criteria}\n\n## Instructions for Antigravity IDE\nActivate /factory-build and /poteto-mode (if installed). Apply Ponytail minimal complete diff principles. Inspect code before planning; cover API, frontend, database, mobile, migrations, tests and observability as applicable. Work in the worktree recorded by this task. Run: node "${join(ROOT, 'bin', 'factory.mjs')}" verify "${p}" --id "${id}". Do not deploy or merge without explicit approval.\n`;
+  const prompt = `# Task: ${t.title}\n\nTask ID: ${t.id}\nProject: ${p}\nAgent Role: ${t.agent_role}\n\n## Acceptance criteria\n${t.criteria}\n\n## Instructions for Antigravity / Cursor IDE\nActivate /factory-build and /poteto-mode (if installed). Apply Ponytail minimal complete diff principles. Inspect code before planning; cover API, frontend, database, mobile, migrations, tests and observability as applicable. Work in the worktree recorded by this task. Run: factory verify "${p}" --id "${id}" (or node "${join(ROOT, 'bin', 'factory.mjs')}" verify "${p}" --id "${id}"). Do not deploy or merge without explicit approval.\n`;
   writeFileSync(join(store(p), 'tasks', `${id}.md`), prompt, 'utf8');
 
   withDb(p, db => {
@@ -348,7 +350,10 @@ export function doctor(p) {
   const home = process.env.USERPROFILE || process.env.HOME || '';
   const globalSkills = join(home, '.gemini', 'config', 'skills');
   const globalWorkflows = join(home, '.gemini', 'workflows');
+  const cursorSkillsDir = join(home, '.cursor', 'skills');
+  const cursorRuleFile = join(home, '.cursor', 'rules', 'factory-quality.mdc');
   const skills = existsSync(globalSkills) ? readdirSync(globalSkills).filter(d => existsSync(join(globalSkills, d, 'SKILL.md'))) : [];
+  const cursorInstalled = existsSync(cursorSkillsDir) ? readdirSync(cursorSkillsDir).filter(d => existsSync(join(cursorSkillsDir, d, 'SKILL.md'))) : [];
   const workflows = existsSync(globalWorkflows) ? readdirSync(globalWorkflows).filter(f => f.endsWith('.md')) : [];
   const expectedSkills = [
     'factory-init', 'factory-plan', 'factory-build', 'factory-status',
@@ -357,6 +362,7 @@ export function doctor(p) {
     'poteto-mode', 'ponytail'
   ];
   const present = expectedSkills.map(k => ({ skill: k, installed_globally: skills.includes(k) }));
+  const cursorSkills = expectedSkills.map(k => ({ skill: k, installed_globally: cursorInstalled.includes(k) }));
   let gitVersion = null;
   try { gitVersion = execFileSync('git', ['--version'], { encoding: 'utf8' }).trim(); } catch {}
 
@@ -382,7 +388,10 @@ export function doctor(p) {
     global_skill_path: globalSkills,
     global_workflow_path: globalWorkflows,
     installed_workflow_count: workflows.length,
-    skills: present
+    skills: present,
+    cursor_skill_path: cursorSkillsDir,
+    cursor_rule_installed: existsSync(cursorRuleFile),
+    cursor_skills: cursorSkills
   };
 }
 

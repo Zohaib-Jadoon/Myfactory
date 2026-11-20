@@ -1,12 +1,13 @@
 # Skills Registry
 
-Verified inventory of Antigravity skills, workflows, and third-party engineering stacks installed for the Universal AI Software Factory.
+Verified inventory of Antigravity & Cursor IDE skills, workflows, rules, and third-party engineering stacks installed for the Universal AI Software Factory.
 
-## 1. Factory Native Skills & Workflows (`v0.2.0`)
+## 1. Factory Native Skills, Workflows & Rules (`v0.2.0`)
 
-- **Source:** Local repository `.agents/skills/` and `.agents/workflows/`
+- **Source:** Local repository `.agents/skills/`, `.agents/workflows/`, `.agents/rules/`, and `.cursor/rules/`
 - **License:** Workspace-local factory components
-- **Global Install Paths:** `C:\Users\CP\.gemini\config\skills\factory-*`, `C:\Users\CP\.gemini\workflows\factory-*.md`, `C:\Users\CP\.agents\workflows\factory-*.md`, `C:\Users\CP\.gemini\config\rules\factory-quality.md`
+- **Antigravity Global Paths:** `C:\Users\CP\.gemini\config\skills\factory-*`, `C:\Users\CP\.gemini\workflows\factory-*.md`, `C:\Users\CP\.agents\workflows\factory-*.md`, `C:\Users\CP\.gemini\config\rules\factory-quality.md`
+- **Cursor Global Paths:** `C:\Users\CP\.cursor\skills\factory-*`, `C:\Users\CP\.cursor\rules\factory-quality.mdc`, `C:\Users\CP\.cursor\rules\pstack-models.mdc` (never touches `C:\Users\CP\.cursor\skills-cursor\`)
 
 | Skill / Command | Status | Purpose |
 |---|---|---|

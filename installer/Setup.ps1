@@ -13,3 +13,4 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
     $doctorTarget = if ($ProjectPath) { $ProjectPath } else { (Get-Location).Path }
     & node (Join-Path (Split-Path -Parent $PSScriptRoot) 'bin\factory.mjs') doctor $doctorTarget
 }
+

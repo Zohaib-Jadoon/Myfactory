@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { inspectProjectStack } from './adapters.mjs';
 import { scanSecrets, redactSecrets, safeSpawn } from './security.mjs';
@@ -128,6 +129,15 @@ export function detectProviders() {
       available: true,
       authenticated: true,
       notes: 'Operated inside Antigravity via /factory-* skills, workflows, and IDE subagents.'
+    },
+    {
+      id: 'cursor-ide',
+      label: 'Cursor IDE Native Agent',
+      available: existsSync(join(homedir(), '.cursor')) || probeCli('cursor'),
+      authenticated: existsSync(join(homedir(), '.cursor')),
+      notes: existsSync(join(homedir(), '.cursor'))
+        ? 'Operated inside Cursor via /factory-* skills (~/.cursor/skills) and ~/.cursor/rules/factory-quality.mdc.'
+        : 'Cursor config directory (~/.cursor) not detected'
     },
     {
       id: 'claude-cli',
@@ -366,26 +376,26 @@ export async function executeAgentTask({ db, project, task, runGateFn }) {
           artifacts: []
         };
       } else {
-        // No silent fake coding: mark awaiting_agent so Antigravity IDE (/factory-build) executes it cleanly.
+        // No silent fake coding: mark awaiting_agent so Antigravity / Cursor IDE (/factory-build) executes it cleanly.
         const briefPath = join(project.path, '.factory', 'tasks', `${task.id}.md`);
         const prompt = [
-          `# Antigravity Task Brief: ${task.title}`,
+          `# IDE Task Brief (Antigravity / Cursor): ${task.title}`,
           ``,
           `- **Task ID:** ${task.id}`,
           `- **Role:** ${role.name}`,
           `- **Worktree:** ${workDir}`,
           `- **Acceptance Criteria:** ${task.criteria}`,
           ``,
-          `Run inside Antigravity with \`/factory-build\`, \`/poteto-mode\`, and \`/ponytail full\`.`,
+          `Run inside Antigravity or Cursor with \`/factory-build\`, \`/poteto-mode\`, and \`/ponytail full\`.`,
           `After editing & committing inside \`${workDir}\`, verify with:`,
-          `\`node "${resolve(import.meta.dirname, '..', 'bin', 'factory.mjs')}" verify "${project.path}" --id "${task.id}"\``
+          `\`factory verify "${project.path}" --id "${task.id}"\``
         ].join('\n');
         mkdirSync(join(briefPath, '..'), { recursive: true });
         writeFileSync(briefPath, prompt, 'utf8');
         outcome = {
           status: 'awaiting_agent',
           handoffRequired: true,
-          summary: `Prepared Antigravity IDE brief at .factory/tasks/${task.id}.md (awaiting IDE agent or worker implementation).`,
+          summary: `Prepared IDE brief at .factory/tasks/${task.id}.md (awaiting IDE agent or worker implementation).`,
           artifacts: [`.factory/tasks/${task.id}.md`]
         };
       }

@@ -9,7 +9,7 @@ import { assertInsideRoot, enforceSafetyPolicy, redactSecrets, scanSecrets } fro
 import { inspectProjectStack } from '../src/adapters.mjs';
 import { createPipelinePlan, cancelTask, integrateWorktree, prepareReleaseCandidate, resumeTasks, runOrchestrator } from '../src/orchestrator.mjs';
 import { runQualityGates } from '../src/gates.mjs';
-import { init, create, makeWorktree, verify, approve, serve } from '../bin/factory.mjs';
+import { init, create, makeWorktree, verify, approve, serve, doctor } from '../bin/factory.mjs';
 
 const gitRun = (dir, args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
 
@@ -242,17 +242,32 @@ test('dashboard JSON API returns persisted SQLite state cleanly', async t => {
   }
 });
 
-test('full init scaffolds .agent, .agents, and .factory while preserving existing files', t => {
+test('full init scaffolds .agent, .agents, .cursor, and .factory while preserving existing files', t => {
   const dir = setupRepo(t, { withGit: false });
   mkdirSync(join(dir, '.agent'), { recursive: true });
   writeFileSync(join(dir, '.agent', 'README.md'), 'CUSTOM_EXISTING_README\n', 'utf8');
+  mkdirSync(join(dir, '.cursor', 'rules'), { recursive: true });
+  writeFileSync(join(dir, '.cursor', 'rules', 'custom.mdc'), 'CUSTOM_RULE\n', 'utf8');
 
   const res = init(dir, { full: true });
   assert.ok(res.scaffolded_count > 10);
   assert.equal(readFileSync(join(dir, '.agent', 'README.md'), 'utf8'), 'CUSTOM_EXISTING_README\n');
+  assert.equal(readFileSync(join(dir, '.cursor', 'rules', 'custom.mdc'), 'utf8'), 'CUSTOM_RULE\n');
   assert.ok(existsSync(join(dir, '.agent', 'SECURITY.md')));
   assert.ok(existsSync(join(dir, '.agents', 'skills', 'factory-init', 'SKILL.md')));
   assert.ok(existsSync(join(dir, '.agents', 'workflows', 'factory-build.md')));
   assert.ok(existsSync(join(dir, '.agents', 'rules', 'factory-quality.md')));
+  assert.ok(existsSync(join(dir, '.cursor', 'rules', 'factory-quality.mdc')));
+  assert.ok(existsSync(join(dir, '.cursor', 'skills', 'factory-plan', 'SKILL.md')));
   assert.ok(existsSync(join(dir, '.factory', 'config.json')));
+});
+
+test('doctor reports Cursor IDE skill/rule state and cursor-ide provider', t => {
+  const dir = setupRepo(t, { withGit: false });
+  const info = doctor(dir);
+  assert.equal(typeof info.cursor_skill_path, 'string');
+  assert.equal(typeof info.cursor_rule_installed, 'boolean');
+  assert.equal(Array.isArray(info.cursor_skills), true);
+  assert.equal(info.cursor_skills.length, 13);
+  assert.ok(info.providers.some(p => p.id === 'cursor-ide'));
 });
