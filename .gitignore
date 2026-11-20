@@ -1,5 +1,7 @@
 .factory/
 .fallow/
+.factory-manifest.json
+.factory-update-in-progress.json
 node_modules/
 *.log
 *.db
