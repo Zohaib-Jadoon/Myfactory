@@ -25,20 +25,19 @@ Verified inventory of Antigravity & Cursor IDE skills, workflows, rules, and thi
 
 ## 2. pstack Integration
 
-- **Authentic Upstream Source:** `https://github.com/pstack-ports/agy-pstack` (Antigravity port of Lauren Tan's `pstack` from `cursor/plugins`)
-- **Verified Version / Commit:** `0.15.43` (commit `a96658a5fef674d26ba623124a51af61c3f91003`, pushed `2026-11-17T01:54:50Z`)
-- **License:** MIT License (`Copyright (c) 2026 Lauren Tan`)
-- **Installed Skills (`39` workflow/utility skills + `25` `principle-*` leaf skills):**
+- **Auto-Install Source (used when missing):** `https://github.com/backnotprop/pstack.git` (MIT License, `Copyright (c) 2026 Lauren Tan`)
+- **Prior Local Antigravity Install Source:** `https://github.com/pstack-ports/agy-pstack` (`0.15.43`, commit `a96658a5fef674d26ba623124a51af61c3f91003`, MIT)
+- **Installed Skills (`39` workflow/utility skills + `25` `principle-*` leaf skills, mirrored to `~/.cursor/skills/` and Cursor agents in `~/.cursor/agents/`):**
   `architect`, `arena`, `automate-me`, `benchmark-checklist`, `blast-radius`, `bro`, `control-cli`, `control-ui`, `correct`, `create-formal-verification-skill`, `create-verification-skill`, `deslop`, `figure-it-out`, `how`, `in-your-own-words`, `interrogate`, `ketchup`, `ketchup-video`, `maintain-formal-verification-skill`, `maintain-verification-skill`, `make-bot-ui`, `no-comments`, `poteto-help`, `poteto-mode`, `recall`, `reflect`, `setup-pstack`, `sharpen`, `show-me-your-work`, `statechart`, `swarm`, `tdd`, `teach`, `technical-writing`, `typescript-best-practices`, `unslop`, `why`, plus all 25 `principle-*` skills.
-- **Note on IDE Refresh:** `control-cli`, `control-ui`, and `deslop` were installed into `C:\Users\CP\.gemini\config\skills\` during this session; Antigravity IDE UI skill listing refresh is **PENDING MANUAL RESTART** if not dynamically reloaded.
+- **Note on IDE Refresh:** Newly added skills are **PENDING MANUAL RESTART** in already-open IDE UI dropdowns if not dynamically reloaded.
 
 ## 3. Ponytail Integration
 
-- **Authentic Upstream Source:** `https://github.com/DietrichGebert/ponytail`
+- **Auto-Install & Authentic Upstream Source:** `https://github.com/DietrichGebert/ponytail.git`
 - **Verified Installed Version / Commit:** `4.9.0` (commit `2ed6c52`, `C:\Users\CP\.gemini\config\plugins\ponytail`)
 - **License:** MIT License (`Copyright (c) 2026 DietrichGebert`)
-- **Installed Skills:** `ponytail`, `ponytail-audit`, `ponytail-debt`, `ponytail-gain`, `ponytail-help`, `ponytail-review`
-- **Repair Applied:** Stripped invalid UTF-8 BOM (`\ufeff`) from `C:\Users\CP\.gemini\config\plugins\ponytail\plugin.json` that caused repeated `plugins.go:502` parse errors in Antigravity `language_server.log`.
+- **Installed Skills (Antigravity + Cursor `~/.cursor/skills/`):** `ponytail`, `ponytail-audit`, `ponytail-debt`, `ponytail-gain`, `ponytail-help`, `ponytail-review`
+- **Repair Applied:** Stripped invalid UTF-8 BOM (`\ufeff`) from `C:\Users\CP\.gemini\config\plugins\ponytail\plugin.json` that caused repeated `plugins.go:502` parse errors in Antigravity `language_server.log`. `copySkillDirs` also skips loose root `plugin.json` files when copying `skills/`.
 
 ## 4. Instruction Conflict Resolution Policy
 

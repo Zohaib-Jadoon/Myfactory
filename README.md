@@ -24,24 +24,26 @@ Open **Antigravity** or **Cursor** inside any project folder and paste this prom
 ```text
 Install Myfactory from https://github.com/Zohaib-Jadoon/Myfactory.git.
 Clone it to C:\Tools\Myfactory (or pull if it already exists), inspect README.md and AGENTS.md, then run:
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Tools\Myfactory\installer\Setup.ps1 -ProjectPath "." -Scope Both -InstallExternalSkills -UpdateFactory
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Tools\Myfactory\installer\Setup.ps1 -ProjectPath "." -Scope Both -UpdateFactory
 Verify `npm test` in C:\Tools\Myfactory and `factory doctor "."`. Preserve all existing project files and never close or restart Antigravity or Cursor IDE.
 ```
 
 ### Option B — Manual PowerShell Install
 
-**1. Install once globally for all projects on your PC (Antigravity + Cursor + `factory` CLI):**
+**1. Install once globally for all projects on your PC (Antigravity + Cursor + `factory` CLI + auto-installs missing pstack & Ponytail):**
 
 ```powershell
 git clone https://github.com/Zohaib-Jadoon/Myfactory.git C:\Tools\Myfactory
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Tools\Myfactory\installer\Setup.ps1 -Scope Global -InstallExternalSkills
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Tools\Myfactory\installer\Setup.ps1 -Scope Global
 ```
 
 **2. Install globally AND initialize a specific project workspace at the same time:**
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Tools\Myfactory\installer\Setup.ps1 -ProjectPath "C:\Projects\MyApp" -Scope Both -InstallExternalSkills
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Tools\Myfactory\installer\Setup.ps1 -ProjectPath "C:\Projects\MyApp" -Scope Both
 ```
+
+`Setup.ps1` and `factory init .` automatically detect if **pstack** (`https://github.com/backnotprop/pstack.git`, MIT) or **Ponytail** (`https://github.com/DietrichGebert/ponytail.git`, MIT) are missing and install them into both Antigravity and Cursor without overwriting existing skills. For offline installs, pass `-SkipExternalSkills` (or `factory init . --skip-external`).
 
 **3. Update an existing local installation later:**
 

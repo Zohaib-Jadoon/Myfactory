@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, realpathSync, copyFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, realpathSync, copyFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { resolve, join, dirname, basename } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -21,6 +22,8 @@ import {
 import { startDashboardServer } from '../src/dashboard.mjs';
 
 export const VERSION = '0.2.0';
+export const PSTACK_REPO = 'https://github.com/backnotprop/pstack.git';
+export const PONYTAIL_REPO = 'https://github.com/DietrichGebert/ponytail.git';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const asPath = p => resolve(p || process.cwd());
 const store = p => join(p, '.factory');
@@ -125,6 +128,64 @@ function copyMissingTree(srcDir, destDir, created = []) {
     }
   }
   return created;
+}
+
+export function copySkillDirs(skillsRoot, destRoot, created = []) {
+  if (!existsSync(skillsRoot)) return created;
+  mkdirSync(destRoot, { recursive: true });
+  for (const entry of readdirSync(skillsRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const srcSkill = join(skillsRoot, entry.name);
+    if (existsSync(join(srcSkill, 'SKILL.md'))) {
+      copyMissingTree(srcSkill, join(destRoot, entry.name), created);
+    }
+  }
+  return created;
+}
+
+export function ensureExternalSkills({ skillTargets = [], agentTargets = [], skip = false } = {}) {
+  if (skip) return { skipped: true, installed: [], warnings: [] };
+  const missingPstack = skillTargets.filter(t => !existsSync(join(t, 'poteto-mode', 'SKILL.md')));
+  const missingPstackAgents = agentTargets.filter(a => !existsSync(join(a, 'poteto-agent.md')));
+  const missingPonytail = skillTargets.filter(t => !existsSync(join(t, 'ponytail', 'SKILL.md')));
+  if (missingPstack.length === 0 && missingPstackAgents.length === 0 && missingPonytail.length === 0) {
+    return { skipped: false, installed: [], warnings: [] };
+  }
+
+  const installed = [];
+  const warnings = [];
+  const pkgs = [];
+  if (missingPstack.length > 0 || missingPstackAgents.length > 0) {
+    pkgs.push({ name: 'pstack', repo: PSTACK_REPO, targets: missingPstack, agents: missingPstackAgents });
+  }
+  if (missingPonytail.length > 0) pkgs.push({ name: 'ponytail', repo: PONYTAIL_REPO, targets: missingPonytail, agents: [] });
+
+  for (const pkg of pkgs) {
+    const tmp = mkdtempSync(join(tmpdir(), 'factory-ext-'));
+    try {
+      execFileSync('git', ['clone', '--quiet', '--depth', '1', pkg.repo, tmp], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+      for (const target of pkg.targets) {
+        copySkillDirs(join(tmp, 'skills'), target);
+      }
+      if (pkg.agents.length > 0 && existsSync(join(tmp, 'agents'))) {
+        for (const agentDir of pkg.agents) {
+          mkdirSync(agentDir, { recursive: true });
+          for (const entry of readdirSync(join(tmp, 'agents'), { withFileTypes: true })) {
+            if (entry.isFile() && entry.name.endsWith('.md')) {
+              const dst = join(agentDir, entry.name);
+              if (!existsSync(dst)) copyFileSync(join(tmp, 'agents', entry.name), dst);
+            }
+          }
+        }
+      }
+      installed.push(pkg.name);
+    } catch (err) {
+      warnings.push(`Could not auto-install ${pkg.name} from ${pkg.repo}: ${err.message}`);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+  return { skipped: false, installed, warnings };
 }
 
 export function init(p, opts = {}) {
@@ -538,7 +599,7 @@ function help() {
 
 Usage:
   node bin/factory.mjs doctor [project]
-  node bin/factory.mjs init [project] [--name "Project"] [--factory-only]
+  node bin/factory.mjs init [project] [--name "Project"] [--factory-only] [--skip-external]
   node bin/factory.mjs plan [project] --goal "Requirements..." [--roles backend,frontend,database]
   node bin/factory.mjs create [project] --name "Task" --criteria "Outcome" [--role backend]
   node bin/factory.mjs run [project] [--pipeline ID] [--concurrency 3]
@@ -578,7 +639,20 @@ if (executed) {
       const p = args[0] && !args[0].startsWith('--') ? args[0] : process.cwd();
       let output;
       switch (command) {
-        case 'init': output = init(p, { name: arg(args, 'name'), full: !hasFlag(args, 'factory-only') }); break;
+        case 'init': {
+          const full = !hasFlag(args, 'factory-only');
+          output = init(p, { name: arg(args, 'name'), full });
+          const inTest = process.execArgv.some(a => a.includes('test')) || Boolean(process.env.NODE_TEST_CONTEXT) || process.env.FACTORY_SKIP_EXTERNAL === '1';
+          if (full && !inTest) {
+            const home = process.env.USERPROFILE || process.env.HOME || '';
+            output.external_skills = ensureExternalSkills({
+              skillTargets: [join(home, '.gemini', 'config', 'skills'), join(home, '.cursor', 'skills')],
+              agentTargets: [join(home, '.cursor', 'agents')],
+              skip: hasFlag(args, 'skip-external')
+            });
+          }
+          break;
+        }
         case 'doctor': output = doctor(p); break;
         case 'plan': output = plan(p, arg(args, 'goal'), { roles: arg(args, 'roles') }); break;
         case 'create': output = create(p, arg(args, 'name'), arg(args, 'criteria'), { role: arg(args, 'role') || 'backend', stage: arg(args, 'stage') || 'implementation', priority: Number(arg(args, 'priority') || 50) }); break;

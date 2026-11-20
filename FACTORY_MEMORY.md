@@ -50,6 +50,8 @@ Durable operational log and state for the Universal AI Software Factory (Google 
   - Added `.cursor/rules/factory-quality.mdc` (`alwaysApply: true`) and made all 11 `factory-*` skills IDE-neutral using `factory <cmd>` CLI + fallback.
   - Added `cursor-ide` provider detection in `src/agents.mjs` and Cursor skill/rule checks in `bin/factory.mjs` `doctor()`.
   - Updated `factory init .` (`opts.full`) and `installer/Install-Factory.ps1` to scaffold/install `.cursor/rules` and `.cursor/skills` (`~/.cursor/skills`, `~/.cursor/rules/factory-quality.mdc`, `~/.cursor/rules/pstack-models.mdc`) and mirror local `pstack`/`ponytail` skills to `~/.cursor/skills` without touching `~/.cursor/skills-cursor/`.
+- [x] **Phase 8: Auto-Install Missing pstack & Ponytail From Upstream Repos**
+  - Updated `installer/Install-Factory.ps1`, `installer/Setup.ps1`, and `bin/factory.mjs` (`ensureExternalSkills` + `copySkillDirs`) to automatically clone and install missing `pstack` (`https://github.com/backnotprop/pstack.git`) and `Ponytail` (`https://github.com/DietrichGebert/ponytail.git`) without overwriting existing skills or copying loose `plugin.json` files.
 
 ## 3. Remaining Gaps / Known Limitations
 

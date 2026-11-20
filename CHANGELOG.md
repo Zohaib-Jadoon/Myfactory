@@ -11,6 +11,7 @@
 - Upgraded local read-only Control Dashboard (`src/dashboard.mjs`) with SQLite-backed multi-project views and JSON APIs (`/api/overview`, `/api/projects`, `/api/health`).
 - Added `/factory-init`, `/factory-status`, `/factory-test`, `/factory-review`, `/factory-fix` skills and all 11 Antigravity slash workflows under `.agents/workflows/`.
 - Added native Cursor IDE support (`.cursor/rules/factory-quality.mdc`, `~/.cursor/skills`, `~/.cursor/rules/pstack-models.mdc`, `cursor-ide` provider, `doctor` Cursor checks, and full `.agent`/`.agents`/`.cursor`/`.factory` scaffolding in `factory init .`).
+- Added automatic missing-skill installation for `pstack` (`https://github.com/backnotprop/pstack.git`) and `Ponytail` (`https://github.com/DietrichGebert/ponytail.git`) in `Setup.ps1`, `Install-Factory.ps1`, and CLI `factory init .` (plus Cursor `agents/` copy and `-SkipExternalSkills` / `--skip-external` offline flags).
 - Repaired UTF-8 BOM in installed `ponytail/plugin.json` and installed missing `agy-pstack` skills (`control-cli`, `control-ui`, `deslop`).
 
 ## v0.1.0

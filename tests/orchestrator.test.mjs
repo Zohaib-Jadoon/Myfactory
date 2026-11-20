@@ -9,7 +9,7 @@ import { assertInsideRoot, enforceSafetyPolicy, redactSecrets, scanSecrets } fro
 import { inspectProjectStack } from '../src/adapters.mjs';
 import { createPipelinePlan, cancelTask, integrateWorktree, prepareReleaseCandidate, resumeTasks, runOrchestrator } from '../src/orchestrator.mjs';
 import { runQualityGates } from '../src/gates.mjs';
-import { init, create, makeWorktree, verify, approve, serve, doctor } from '../bin/factory.mjs';
+import { init, create, makeWorktree, verify, approve, serve, doctor, copySkillDirs, PSTACK_REPO, PONYTAIL_REPO } from '../bin/factory.mjs';
 
 const gitRun = (dir, args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
 
@@ -270,4 +270,27 @@ test('doctor reports Cursor IDE skill/rule state and cursor-ide provider', t => 
   assert.equal(Array.isArray(info.cursor_skills), true);
   assert.equal(info.cursor_skills.length, 13);
   assert.ok(info.providers.some(p => p.id === 'cursor-ide'));
+});
+
+test('copySkillDirs copies valid SKILL.md folders, preserves existing, and skips loose files', t => {
+  assert.equal(PSTACK_REPO, 'https://github.com/backnotprop/pstack.git');
+  assert.equal(PONYTAIL_REPO, 'https://github.com/DietrichGebert/ponytail.git');
+  const srcRoot = setupRepo(t, { withGit: false });
+  const dstRoot = setupRepo(t, { withGit: false });
+
+  mkdirSync(join(srcRoot, 'poteto-mode', 'playbooks'), { recursive: true });
+  writeFileSync(join(srcRoot, 'poteto-mode', 'SKILL.md'), '---\nname: poteto-mode\n---\n', 'utf8');
+  writeFileSync(join(srcRoot, 'poteto-mode', 'playbooks', 'feature.md'), '# feature\n', 'utf8');
+  writeFileSync(join(srcRoot, 'plugin.json'), '{"name":"ponytail"}\n', 'utf8');
+  mkdirSync(join(srcRoot, 'not-a-skill'), { recursive: true });
+  writeFileSync(join(srcRoot, 'not-a-skill', 'notes.txt'), 'ignore\n', 'utf8');
+
+  mkdirSync(join(dstRoot, 'poteto-mode'), { recursive: true });
+  writeFileSync(join(dstRoot, 'poteto-mode', 'SKILL.md'), 'CUSTOM_KEEP\n', 'utf8');
+
+  copySkillDirs(srcRoot, dstRoot);
+  assert.equal(readFileSync(join(dstRoot, 'poteto-mode', 'SKILL.md'), 'utf8'), 'CUSTOM_KEEP\n');
+  assert.ok(existsSync(join(dstRoot, 'poteto-mode', 'playbooks', 'feature.md')));
+  assert.equal(existsSync(join(dstRoot, 'plugin.json')), false);
+  assert.equal(existsSync(join(dstRoot, 'not-a-skill')), false);
 });

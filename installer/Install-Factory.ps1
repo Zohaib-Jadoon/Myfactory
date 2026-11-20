@@ -1,4 +1,4 @@
-# Windows 11 / PowerShell 5.1+ installer. No elevated privileges needed.
+﻿# Windows 11 / PowerShell 5.1+ installer. No elevated privileges needed.
 # Never closes, restarts, or modifies Antigravity IDE or Cursor IDE executables.
 [CmdletBinding()]
 param(
@@ -7,10 +7,13 @@ param(
     [switch]$InstallPstack,
     [switch]$InstallPonytail,
     [switch]$InstallExternalSkills,
+    [switch]$SkipExternalSkills,
     [switch]$UpdateFactory
 )
 $ErrorActionPreference='Stop'
 $source=Split-Path -Parent $PSScriptRoot
+$PstackRepo='https://github.com/backnotprop/pstack.git'
+$PonytailRepo='https://github.com/DietrichGebert/ponytail.git'
 if ($InstallExternalSkills) { $InstallPstack = $true; $InstallPonytail = $true }
 if ($Scope -in @('Workspace','Both')) {
     if (-not $ProjectPath) { $ProjectPath=(Get-Location).Path }
@@ -33,8 +36,17 @@ function Copy-Tree([string]$from,[string]$dest,[bool]$overwrite=$false){
     }
 }
 
-function Add-External([string]$repo,[string]$label,[string[]]$skillTargets){
-    if(-not (Get-Command git -ErrorAction SilentlyContinue)) { throw 'Git is required to install third-party skills.' }
+function Copy-SkillDirs([string]$skillsRoot,[string]$destRoot,[bool]$overwrite=$false){
+    if (-not (Test-Path $skillsRoot)) { return }
+    Get-ChildItem -LiteralPath $skillsRoot -Directory | ForEach-Object {
+        if (Test-Path (Join-Path $_.FullName 'SKILL.md')) {
+            Copy-Tree $_.FullName (Join-Path $destRoot $_.Name) $overwrite
+        }
+    }
+}
+
+function Add-External([string]$repo,[string]$label,[string[]]$skillTargets,[string[]]$agentTargets=@()){
+    if(-not (Get-Command git -ErrorAction SilentlyContinue)) { throw "Git is required to auto-install $label. Pass -SkipExternalSkills for offline installs." }
     $temp=Join-Path ([IO.Path]::GetTempPath()) ("factory-skills-"+[Guid]::NewGuid().ToString('N'))
     try {
         Write-Host "Cloning $label from $repo (review external code before use)" -ForegroundColor Yellow
@@ -42,7 +54,22 @@ function Add-External([string]$repo,[string]$label,[string[]]$skillTargets){
         if($LASTEXITCODE -ne 0){throw "Git clone failed: $repo"}
         $skillsDir = Join-Path $temp 'skills'
         if (Test-Path $skillsDir) {
-            foreach ($t in $skillTargets) { Copy-Tree $skillsDir $t $false }
+            foreach ($t in $skillTargets) { Copy-SkillDirs $skillsDir $t $false }
+        }
+        $agentsDir = Join-Path $temp 'agents'
+        if (($agentTargets.Count -gt 0) -and (Test-Path $agentsDir)) {
+            foreach ($a in $agentTargets) {
+                New-Item -ItemType Directory -Force -Path $a | Out-Null
+                Get-ChildItem -LiteralPath $agentsDir -Filter '*.md' -File | ForEach-Object {
+                    $out = Join-Path $a $_.Name
+                    if (-not (Test-Path -LiteralPath $out)) {
+                        Copy-Item -LiteralPath $_.FullName -Destination $out -Force
+                        Write-Host "Installed: $out"
+                    } else {
+                        Write-Host "Preserved: $out"
+                    }
+                }
+            }
         }
         $revision=& git -C $temp rev-parse HEAD
         Write-Host "$label source commit: $revision"
@@ -50,6 +77,7 @@ function Add-External([string]$repo,[string]$label,[string[]]$skillTargets){
 }
 
 $externalTargets=@()
+$agentTargets=@()
 
 if ($Scope -in @('Global','Both')) {
     $gSkills=Join-Path $HOME '.gemini\config\skills'
@@ -66,6 +94,7 @@ if ($Scope -in @('Global','Both')) {
     Copy-Tree (Join-Path $source '.agents\skills') $cSkills ([bool]$UpdateFactory)
     Copy-Tree (Join-Path $source '.cursor\rules') $cRules ([bool]$UpdateFactory)
     $externalTargets += $cSkills
+    $agentTargets += (Join-Path $HOME '.cursor\agents')
 
     $cursorModels = Join-Path $cRules 'pstack-models.mdc'
     if (-not (Test-Path $cursorModels)) {
@@ -147,12 +176,24 @@ if ($Scope -in @('Workspace','Both')) {
     $externalTargets += (Join-Path $ProjectPath '.agents\skills')
     $externalTargets += (Join-Path $ProjectPath '.cursor\skills')
     if (Get-Command node -ErrorAction SilentlyContinue) {
-        & node (Join-Path $source 'bin\factory.mjs') init $ProjectPath | Out-Null
+        & node (Join-Path $source 'bin\factory.mjs') init $ProjectPath --skip-external | Out-Null
         Write-Host "Initialized .factory in $ProjectPath"
     }
 }
 
-if($InstallPstack){Add-External 'https://github.com/pstack-ports/agy-pstack.git' 'pstack (community Antigravity port)' $externalTargets}
-if($InstallPonytail){Add-External 'https://github.com/DietrichGebert/ponytail.git' 'Ponytail' $externalTargets}
+$missingPstack = @($externalTargets | Where-Object { -not (Test-Path (Join-Path $_ 'poteto-mode\SKILL.md')) })
+$missingPstackAgents = @($agentTargets | Where-Object { -not (Test-Path (Join-Path $_ 'poteto-agent.md')) })
+$missingPonytail = @($externalTargets | Where-Object { -not (Test-Path (Join-Path $_ 'ponytail\SKILL.md')) })
+
+if ($InstallPstack -or ((-not $SkipExternalSkills) -and (($missingPstack.Count -gt 0) -or ($missingPstackAgents.Count -gt 0)))) {
+    $targets = if ($InstallPstack) { $externalTargets } else { $missingPstack }
+    $aTargets = if ($InstallPstack) { $agentTargets } else { $missingPstackAgents }
+    Add-External $PstackRepo 'pstack' $targets $aTargets
+}
+if ($InstallPonytail -or ((-not $SkipExternalSkills) -and ($missingPonytail.Count -gt 0))) {
+    $targets = if ($InstallPonytail) { $externalTargets } else { $missingPonytail }
+    Add-External $PonytailRepo 'Ponytail' $targets
+}
+
 Write-Host "Installation complete. Scope: $Scope" -ForegroundColor Green
 Write-Host 'Antigravity IDE and Cursor IDE remain open. If newly added UI slash commands are not visible yet, mark PENDING MANUAL RESTART.'
